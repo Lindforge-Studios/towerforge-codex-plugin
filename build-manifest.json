@@ -6,8 +6,8 @@
   "mcpProtocolVersion": "2024-11-05",
   "agentGuideVersion": 5,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "025334cc4a070d587506afd867ad52da77352978",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/025334cc4a070d587506afd867ad52da77352978",
+  "sourceCommit": "317fa4c9a99c35608e257f607d5009896d4d898c",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/317fa4c9a99c35608e257f607d5009896d4d898c",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -1216,12 +1216,12 @@
     {
       "path": "README.md",
       "size": 2240,
-      "sha256": "f00ba78387e1fa751c653c77c690e048c064eb6338276b198d9465df35a07266"
+      "sha256": "d7ebe75af07b764a0423213228a64d6199be9c75588972d5a5c62b90d8f81539"
     },
     {
       "path": "scripts/verify-release.mjs",
-      "size": 3358,
-      "sha256": "e495140f379f1a256e77430760154ecfe6283daee2572ab3387687c7c842cd1f"
+      "size": 3380,
+      "sha256": "fe451238ec3bf0a7de6d8ea29c435ff348e7ea51a1c1fd3bb48f17e3c10b378a"
     },
     {
       "path": "SECURITY.md",
