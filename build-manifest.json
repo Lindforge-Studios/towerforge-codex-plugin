@@ -6,8 +6,8 @@
   "mcpProtocolVersion": "2024-11-05",
   "agentGuideVersion": 5,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "75c645d0359b76a3f13fd12e17c179cca56547f9",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/75c645d0359b76a3f13fd12e17c179cca56547f9",
+  "sourceCommit": "025334cc4a070d587506afd867ad52da77352978",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/025334cc4a070d587506afd867ad52da77352978",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -17,6 +17,11 @@
       "path": ".agents/plugins/marketplace.json",
       "size": 376,
       "sha256": "2fa74b4a50aba24c8dcc3a7e22ad40e00945510918a410a03e02432660d06255"
+    },
+    {
+      "path": ".github/workflows/sync.yml",
+      "size": 3605,
+      "sha256": "386a8909fe56f2c32eebec088a838f2ace7fb91b49ecdebe366d6c257e7cc683"
     },
     {
       "path": ".github/workflows/verify.yml",
@@ -1210,8 +1215,8 @@
     },
     {
       "path": "README.md",
-      "size": 2156,
-      "sha256": "0b34de84379686f069c1243558cd3db232bb02599d21f9500f4d21179a3620af"
+      "size": 2240,
+      "sha256": "f00ba78387e1fa751c653c77c690e048c064eb6338276b198d9465df35a07266"
     },
     {
       "path": "scripts/verify-release.mjs",

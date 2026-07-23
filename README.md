@@ -52,5 +52,6 @@ This is a generated release mirror. Do not edit runtime files here. Every releas
 source commit and per-file SHA-256 values in `build-manifest.json`.
 
 - Canonical source: [Lindforge-Studios/TowerForge](https://github.com/Lindforge-Studios/TowerForge)
-- Source commit: [`75c645d0359b76a3f13fd12e17c179cca56547f9`](https://github.com/Lindforge-Studios/TowerForge/commit/75c645d0359b76a3f13fd12e17c179cca56547f9)
-- Distribution workflow: `Publish Codex Plugin Mirror` in the canonical repository
+- Source commit: [`025334cc4a070d587506afd867ad52da77352978`](https://github.com/Lindforge-Studios/TowerForge/commit/025334cc4a070d587506afd867ad52da77352978)
+- Distribution workflow: `Sync from TowerForge` in this mirror. It uses only this repository's
+  short-lived `GITHUB_TOKEN`; no cross-repository credential is stored.
