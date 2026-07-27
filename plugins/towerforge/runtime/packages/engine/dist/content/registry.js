@@ -1,8 +1,10 @@
 import { GridMap } from "../simulation/map.js";
 import { normalizeTerrainTypes } from "../simulation/terrain.js";
+import { resolveCapabilitySet } from "./mechanics.js";
 export const DEFAULT_CURRENCIES = [{ id: "coins", label: "Coins", color: 0xf5c542 }];
 export function createGameContentRegistry(options) {
     const { balance, maps } = options;
+    const mechanics = options.mechanics ?? { schemaVersion: 1, modules: {} };
     const missions = Object.fromEntries(Object.values(balance.missions).map((mission) => {
         const abilityIds = mission.abilityIds ?? [];
         const resolved = {
@@ -11,6 +13,7 @@ export function createGameContentRegistry(options) {
             abilityIds: [...abilityIds],
             waves: balance.waveSets[mission.waveSetId] ?? [],
             abilities: abilityIds.map((abilityId) => balance.abilities[abilityId]).filter((a) => !!a),
+            capabilities: resolveCapabilitySet(mechanics, mission.mechanics),
             mapFactory: () => {
                 const mapDefinition = maps[mission.mapId];
                 if (!mapDefinition) {
@@ -38,6 +41,7 @@ export function createGameContentRegistry(options) {
         missions,
         maps,
         scripts: options.scripts ?? {},
+        mechanics,
         worldMap: options.worldMap,
         visuals: options.visuals ?? {},
         storyComics: options.storyComics?.comics ?? {},
