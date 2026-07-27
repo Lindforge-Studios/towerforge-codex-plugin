@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "pluginVersion": "0.3.0",
-  "towerforgeVersion": "0.3.0",
-  "mcpServerVersion": "0.3.0",
+  "pluginVersion": "0.3.1",
+  "towerforgeVersion": "0.3.1",
+  "mcpServerVersion": "0.3.1",
   "mcpProtocolVersion": "2024-11-05",
   "agentGuideVersion": 30,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "77b128a81a1a1d3dd64af24c458d9a44dfd19d97",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/77b128a81a1a1d3dd64af24c458d9a44dfd19d97",
+  "sourceCommit": "4d6edfca95c4f7f7fb7f9a8d40e1940dd3046a04",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/4d6edfca95c4f7f7fb7f9a8d40e1940dd3046a04",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -41,7 +41,7 @@
     {
       "path": "plugins/towerforge/.codex-plugin/plugin.json",
       "size": 1633,
-      "sha256": "10c74d8338852d8b3ed64296f649cc50b1f4a9f78d4ba3fa6c96abf852bb07a6"
+      "sha256": "0294cd4c85e108a78a1f885fd90159a3ef3c0447291299934113d52e2a37f869"
     },
     {
       "path": "plugins/towerforge/.mcp.json",
@@ -796,7 +796,7 @@
     {
       "path": "plugins/towerforge/runtime/package.json",
       "size": 109,
-      "sha256": "493756f25dddf642104e16934759d1cf9c8bbae7f08ce91c2c9d05be03c6256b"
+      "sha256": "8ab14148061cb70a0bc779f59c1b4f4c72dd1ccd9dd591db5d98fed6335aa1ff"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/balance.mjs",
@@ -1611,7 +1611,7 @@
     {
       "path": "plugins/towerforge/runtime/packages/mcp/protocol.mjs",
       "size": 115,
-      "sha256": "fd846ceaeb80d4a3acb7faf4f7173e7ee08286c66288d8b0878e75897701a5f8"
+      "sha256": "0cf0013ebdce0cb74be2282d4966de48d6e979a875fb4e169b08cb4f84b1c754"
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/server.mjs",
@@ -1721,7 +1721,7 @@
     {
       "path": "README.md",
       "size": 2240,
-      "sha256": "d743d4e62147f14f36c968fe99ea963cf6081d7f1818428053e9496098e25614"
+      "sha256": "ae835bebb61d7d04d0f198a33b686be437ad80baff167bd3e10f8ab30f1afb6c"
     },
     {
       "path": "scripts/verify-release.mjs",
