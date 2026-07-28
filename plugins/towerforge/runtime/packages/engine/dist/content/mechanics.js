@@ -23,7 +23,9 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
     "terraforming",
     "roguelite",
     "heroes",
-    "logistics"
+    "logistics",
+    "director",
+    "multiplayer"
 ];
 export const SHIELD_LIMITS = Object.freeze({
     capacity: 1_000_000_000_000,
@@ -111,7 +113,9 @@ export function resolveCapabilitySet(catalog, selection = {}, availableModuleIds
                             || schemaVersion === 5 || schemaVersion === 6 || schemaVersion === 7
                         : moduleId === "logistics"
                             ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
-                            : schemaVersion === 1;
+                            : moduleId === "multiplayer"
+                                ? schemaVersion === 1 || schemaVersion === 2
+                                : schemaVersion === 1;
         const profiles = ownEnumerableDataValue(module, "profiles");
         const profile = profileId === undefined ? undefined : ownEnumerableDataValue(profiles, profileId);
         let reason;
