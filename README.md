@@ -52,6 +52,6 @@ This is a generated release mirror. Do not edit runtime files here. Every releas
 source commit and per-file SHA-256 values in `build-manifest.json`.
 
 - Canonical source: [Lindforge-Studios/TowerForge](https://github.com/Lindforge-Studios/TowerForge)
-- Source commit: [`4d6edfca95c4f7f7fb7f9a8d40e1940dd3046a04`](https://github.com/Lindforge-Studios/TowerForge/commit/4d6edfca95c4f7f7fb7f9a8d40e1940dd3046a04)
+- Source commit: [`df5b0ec6131053ce7b6a015cbc546c6939c6ae07`](https://github.com/Lindforge-Studios/TowerForge/commit/df5b0ec6131053ce7b6a015cbc546c6939c6ae07)
 - Distribution workflow: `Sync from TowerForge` in this mirror. It uses only this repository's
   short-lived `GITHUB_TOKEN`; no cross-repository credential is stored.
