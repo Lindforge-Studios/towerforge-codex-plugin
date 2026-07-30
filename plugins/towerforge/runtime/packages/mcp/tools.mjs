@@ -32,9 +32,10 @@ import {
   stageGeneratedAsset
 } from "../cli/lib/generated-assets.mjs";
 import { runAutoBalancerWorkerBatch } from "../cli/lib/auto-balancer-worker.mjs";
+import { runPersonaQaWorkerBatch } from "../cli/lib/persona-qa-worker.mjs";
 import { exportProjectPack, inspectProjectPack } from "../cli/lib/project-pack.mjs";
 import { packageProject } from "../cli/lib/packaging.mjs";
-import { validateProjectSchemas } from "../cli/lib/project-schema.mjs";
+import { PROCEDURAL_JUICE_SUPPORTED_EVENTS, validateProjectSchemas } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
 import { inspectTileSetCoverage, TILE_PRESETS } from "../renderer/src/autotile.mjs";
 import { applyThemePack, listThemePacks, previewThemePack } from "../cli/lib/theme-packs.mjs";
@@ -73,13 +74,22 @@ import {
   mapElevationAuthoringRevision,
   previewMapElevations
 } from "../cli/lib/map-elevation-authoring.mjs";
+import {
+  PROCEDURAL_JUICE_AUTHORING_SCHEMA,
+  applyProceduralJuiceAuthoring,
+  getProceduralJuiceRecipe,
+  inspectProceduralJuiceAuthoring,
+  listProceduralJuiceRecipes,
+  previewProceduralJuiceAuthoring
+} from "../cli/lib/procedural-juice-authoring.mjs";
+import { projectProceduralJuicePresentation } from "../renderer/src/procedural-juice-presentation.mjs";
 import { TOWERFORGE_AGENT_GUIDE_VERSION } from "./agent-instructions.mjs";
 
 const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -307,6 +317,132 @@ const MAP_GENERATION_SPEC_SCHEMA = Object.freeze({
   required: ["schemaVersion", "mapId", "seed", "grid", "width", "height", "entrances", "loops", "terrain", "buildableRatio"],
   additionalProperties: false
 });
+const JUICE_ID_SCHEMA = Object.freeze({ type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" });
+const JUICE_CONTENT_ID_SCHEMA = Object.freeze({
+  type: "string", minLength: 1,
+  description: "Exact existing project content ID; punctuation, long IDs, and prototype-shaped strings are allowed."
+});
+const JUICE_RANGE_SCHEMA = (minimum, maximum) => Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    min: Object.freeze({ type: "number", minimum, maximum }),
+    max: Object.freeze({ type: "number", minimum, maximum })
+  }),
+  required: Object.freeze(["min", "max"]),
+  additionalProperties: false
+});
+const JUICE_ID_LIST_SCHEMA = (maxItems, minItems = 0) => Object.freeze({
+  type: "array", minItems, maxItems, uniqueItems: true, items: JUICE_ID_SCHEMA
+});
+const JUICE_CONTENT_ID_LIST_SCHEMA = Object.freeze({
+  type: "array", maxItems: 64, uniqueItems: true, items: JUICE_CONTENT_ID_SCHEMA
+});
+const PROCEDURAL_JUICE_CATALOG_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    schemaVersion: Object.freeze({ type: "integer", const: 1 }),
+    particleEmitters: Object.freeze({
+      type: "object", maxProperties: 64, propertyNames: JUICE_ID_SCHEMA,
+      additionalProperties: Object.freeze({
+        type: "object",
+        minProperties: 1,
+        properties: Object.freeze({
+          maxParticles: Object.freeze({ type: "integer", minimum: 1, maximum: 256 }),
+          lifetimeMs: JUICE_RANGE_SCHEMA(1, 10_000),
+          speedPxPerSecond: JUICE_RANGE_SCHEMA(0, 4_096),
+          angleDegrees: JUICE_RANGE_SCHEMA(-3_600, 3_600),
+          sizePx: JUICE_RANGE_SCHEMA(0.1, 256),
+          color: Object.freeze({ type: "string", pattern: "^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$" }),
+          gravityPxPerSecondSquared: Object.freeze({ type: "number", minimum: -4_096, maximum: 4_096 }),
+          blendMode: Object.freeze({ type: "string", enum: Object.freeze(["normal", "additive", "multiply"]) })
+        }),
+        required: Object.freeze(["maxParticles", "lifetimeMs", "speedPxPerSecond", "angleDegrees", "sizePx", "color"]),
+        additionalProperties: false
+      })
+    }),
+    audioCues: Object.freeze({
+      type: "object", maxProperties: 64, propertyNames: JUICE_ID_SCHEMA,
+      additionalProperties: Object.freeze({
+        type: "object",
+        properties: Object.freeze({
+          waveform: Object.freeze({ type: "string", enum: Object.freeze(["sine", "triangle", "square", "sawtooth", "noise"]) }),
+          baseFrequencyHz: Object.freeze({ type: "number", minimum: 20, maximum: 20_000 }),
+          durationMs: Object.freeze({ type: "number", minimum: 1, maximum: 10_000 }),
+          gain: Object.freeze({ type: "number", minimum: 0, maximum: 1 }),
+          pitchSemitones: Object.freeze({
+            type: "object",
+            properties: Object.freeze({
+              damage: Object.freeze({ type: "number", minimum: -48, maximum: 48 }),
+              attackSpeed: Object.freeze({ type: "number", minimum: -48, maximum: 48 }),
+              targetSize: Object.freeze({ type: "number", minimum: -48, maximum: 48 }),
+              variation: JUICE_RANGE_SCHEMA(-24, 24)
+            }),
+            additionalProperties: false
+          })
+        }),
+        required: Object.freeze(["waveform", "baseFrequencyHz", "durationMs", "gain"]),
+        additionalProperties: false
+      })
+    }),
+    cameraCues: Object.freeze({
+      type: "object", maxProperties: 64, propertyNames: JUICE_ID_SCHEMA,
+      additionalProperties: Object.freeze({
+        type: "object",
+        minProperties: 1,
+        properties: Object.freeze({
+          shake: Object.freeze({ type: "object", properties: Object.freeze({ durationMs: Object.freeze({ type: "number", minimum: 1, maximum: 10_000 }), intensity: Object.freeze({ type: "number", minimum: 0, maximum: 1 }) }), required: Object.freeze(["durationMs", "intensity"]), additionalProperties: false }),
+          hitStop: Object.freeze({ type: "object", properties: Object.freeze({ durationMs: Object.freeze({ type: "number", minimum: 1, maximum: 1_000 }), timeScale: Object.freeze({ type: "number", exclusiveMinimum: 0, maximum: 1 }) }), required: Object.freeze(["durationMs", "timeScale"]), additionalProperties: false }),
+          chromaticAberration: Object.freeze({ type: "object", properties: Object.freeze({ durationMs: Object.freeze({ type: "number", minimum: 1, maximum: 10_000 }), intensity: Object.freeze({ type: "number", minimum: 0, maximum: 1 }) }), required: Object.freeze(["durationMs", "intensity"]), additionalProperties: false })
+        }),
+        additionalProperties: false
+      })
+    }),
+    eventBindings: Object.freeze({
+      type: "object", maxProperties: 128, propertyNames: JUICE_ID_SCHEMA,
+      additionalProperties: Object.freeze({
+        type: "object",
+        properties: Object.freeze({
+          event: Object.freeze({ type: "string", enum: PROCEDURAL_JUICE_SUPPORTED_EVENTS }),
+          missionIds: JUICE_CONTENT_ID_LIST_SCHEMA,
+          enemyTypeIds: JUICE_CONTENT_ID_LIST_SCHEMA,
+          particleEmitterIds: JUICE_ID_LIST_SCHEMA(16, 1),
+          audioCueIds: JUICE_ID_LIST_SCHEMA(16, 1),
+          cameraCueIds: JUICE_ID_LIST_SCHEMA(16, 1)
+        }),
+        required: Object.freeze(["event"]),
+        anyOf: Object.freeze([
+          Object.freeze({ required: Object.freeze(["particleEmitterIds"]) }),
+          Object.freeze({ required: Object.freeze(["audioCueIds"]) }),
+          Object.freeze({ required: Object.freeze(["cameraCueIds"]) })
+        ]),
+        additionalProperties: false
+      })
+    })
+  }),
+  required: Object.freeze(["schemaVersion", "particleEmitters", "audioCues", "cameraCues", "eventBindings"]),
+  additionalProperties: false
+});
+const PROCEDURAL_JUICE_NULLABLE_SCHEMA = Object.freeze({ oneOf: Object.freeze([PROCEDURAL_JUICE_CATALOG_SCHEMA, Object.freeze({ type: "null" })]) });
+const JUICE_EVENT_SCALAR_SCHEMA = Object.freeze({ oneOf: Object.freeze([
+  Object.freeze({ type: "string", maxLength: 1024 }),
+  Object.freeze({ type: "number" }),
+  Object.freeze({ type: "boolean" }),
+  Object.freeze({ type: "null" })
+]) });
+const JUICE_EVENT_SCHEMA = Object.freeze({
+  type: "object",
+  maxProperties: 64,
+  propertyNames: Object.freeze({ type: "string", maxLength: 128 }),
+  properties: Object.freeze({ type: Object.freeze({ type: "string", enum: PROCEDURAL_JUICE_SUPPORTED_EVENTS }) }),
+  required: Object.freeze(["type"]),
+  additionalProperties: JUICE_EVENT_SCALAR_SCHEMA
+});
+const JUICE_COORD_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({ q: Object.freeze({ type: "integer" }), r: Object.freeze({ type: "integer" }) }),
+  required: Object.freeze(["q", "r"]),
+  additionalProperties: false
+});
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -316,6 +452,73 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: { domain: { type: "string", enum: SCHEMA_DOMAINS, description: "Focused contract to return; defaults to all." } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_procedural_juice",
+    description: "Read the exact optional Procedural Juice v1 catalog, compact counts, activation state, and the exact project+visuals revision without writing or creating mechanics.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_procedural_juice_recipe",
+    description: "Return a detached Procedural Juice v1 recipe. The recipe is inert: it does not write, enable, or create any project source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Optional workspace path accepted for workflow consistency; detached recipes do not read it." },
+        recipeId: { type: "string", enum: ["impact_feedback", "boss_finisher"] },
+        missionIds: JUICE_CONTENT_ID_LIST_SCHEMA,
+        enemyTypeIds: JUICE_CONTENT_ID_LIST_SCHEMA
+      },
+      required: ["recipeId"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_procedural_juice",
+    description: "Validate and preview an exact visuals-only Procedural Juice candidate without writing project files. Pass null to preview removal/disablement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
+        proceduralJuice: PROCEDURAL_JUICE_NULLABLE_SCHEMA
+      },
+      required: ["proceduralJuice"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_procedural_juice",
+    description: "Guardedly apply an exact previewed Procedural Juice candidate to project.json and content/visuals.json with validation, backup, and rollback. Pass null to disable it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
+        proceduralJuice: PROCEDURAL_JUICE_NULLABLE_SCHEMA,
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["proceduralJuice", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_procedural_juice_event",
+    description: "Project one authored engine event through the active Procedural Juice catalog using the shared deterministic renderer projector. Writes no project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
+        missionId: JUICE_CONTENT_ID_SCHEMA,
+        missionElapsed: { type: "number", minimum: 0, maximum: 1_000_000_000 },
+        originCoord: JUICE_COORD_SCHEMA,
+        event: JUICE_EVENT_SCHEMA
+      },
+      required: ["missionId", "missionElapsed", "originCoord", "event"],
       additionalProperties: false
     }
   },
@@ -984,6 +1187,58 @@ export const TOOLS = [
     }
   },
   {
+    name: "run_persona_qa",
+    description:
+      "Run the fixed deterministic aggressive_rush, greedy_economy, and turtle_shield persona matrix and return evidence only. Writes no project files and never applies a balance patch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        schemaVersion: { type: "integer", const: 1 },
+        missionIds: {
+          type: "array", minItems: 1, maxItems: 32, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 256, description: "Runtime also caps each value at 256 UTF-8 bytes." }
+        },
+        seeds: {
+          type: "array", minItems: 1, maxItems: 64, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 256, description: "Runtime also caps each value at 256 UTF-8 bytes." }
+        },
+        personaIds: {
+          type: "array", minItems: 1, maxItems: 3, uniqueItems: true,
+          items: { type: "string", enum: ["aggressive_rush", "greedy_economy", "turtle_shield"] }
+        },
+        simSeconds: { type: "number", minimum: 0.05, maximum: 3600 },
+        tickStep: { type: "number", minimum: 0.05, maximum: 0.2 }
+      },
+      required: ["missionIds", "seeds", "personaIds", "simSeconds", "tickStep"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_quest_generation",
+    description:
+      "Preview deterministic weighted quest selection from the active mission-selected quests v1 profile. Writes no project files and never enables or commits mechanics.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        missionId: { type: "string", minLength: 1, maxLength: 128 },
+        seed: {
+          oneOf: [
+            { type: "string", minLength: 1, maxLength: 256 },
+            { type: "integer", minimum: -9007199254740991, maximum: 9007199254740991 }
+          ]
+        },
+        eligibleDefinitionIds: {
+          type: "array", maxItems: 256, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 128 }
+        }
+      },
+      required: ["missionId", "seed"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "propose_balance_patches",
     description:
       "Evaluate bounded candidate balance patches across a deterministic seed/strategy matrix and return ranked evidence-only proposals. This compute-only tool writes no project files and never commits or applies a proposal.",
@@ -1587,6 +1842,11 @@ export const TOOLS = [
 
 const TOOL_RISK = {
   describe_schema: { riskClass: "read_only", sideEffect: "none" },
+  get_procedural_juice: { riskClass: "read_only", sideEffect: "none" },
+  get_procedural_juice_recipe: { riskClass: "read_only", sideEffect: "none" },
+  preview_procedural_juice: { riskClass: "compute_only", sideEffect: "validates an in-memory candidate and writes no project files" },
+  apply_procedural_juice: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
+  preview_procedural_juice_event: { riskClass: "compute_only", sideEffect: "uses the shared deterministic renderer projector and writes no project files" },
   list_recipes: { riskClass: "read_only", sideEffect: "none" },
   get_recipe: { riskClass: "read_only", sideEffect: "none" },
   explain_validation: { riskClass: "read_only", sideEffect: "none" },
@@ -1641,6 +1901,8 @@ const TOOL_RISK = {
   package_web: { riskClass: "write_local", sideEffect: "writes a portable web bundle and deterministic zip under the project" },
   package_desktop: { riskClass: "write_local", sideEffect: "writes desktop scaffold" },
   balance_report: { riskClass: "compute_only", sideEffect: "builds engine dist if stale" },
+  run_persona_qa: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and returns evidence only" },
+  preview_quest_generation: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and never enables mechanics" },
   propose_balance_patches: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and returns evidence-only proposals" },
   dry_run_balance_patch: { riskClass: "compute_only", sideEffect: "none" },
   apply_balance_patch: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
@@ -1953,6 +2215,40 @@ export async function callTool(name, args = {}, ctx = {}) {
       snapshot: { field: "director", optional: true, supportedSchemaVersions: [1] },
       events: ["directorDecision"]
     };
+    const quests = {
+      authoring: engine.QUEST_MECHANICS_SCHEMA,
+      selection: {
+        schemaVersion: 1,
+        tool: "preview_quest_generation",
+        deterministic: true,
+        weightedWithoutReplacement: true,
+        activeMissionProfileOnly: true
+      },
+      snapshot: { field: "quests", optional: true, supportedSchemaVersions: [1] },
+      checkpoint: { field: "state.quests", optional: true, supportedSchemaVersions: [1] },
+      events: ["questCompleted", "questFailed"]
+    };
+    const personaQa = {
+      schemaVersion: 1,
+      personaIds: [...engine.PERSONA_QA_PERSONA_IDS],
+      deterministic: true,
+      tool: "run_persona_qa",
+      request: {
+        requiredFields: ["missionIds", "seeds", "personaIds", "simSeconds", "tickStep"],
+        additionalProperties: false,
+        limits: engine.PERSONA_QA_LIMITS
+      }
+    };
+    const proceduralJuice = {
+      ...PROCEDURAL_JUICE_AUTHORING_SCHEMA,
+      catalog: PROCEDURAL_JUICE_CATALOG_SCHEMA,
+      recipes: listProceduralJuiceRecipes(),
+      eventPreview: {
+        tool: "preview_procedural_juice_event",
+        computeOnly: true,
+        projector: "@towerforge/renderer/projectProceduralJuicePresentation"
+      }
+    };
     const multiplayer = {
       entrypoint: "@towerforge/engine/multiplayer",
       authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
@@ -2040,7 +2336,10 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("heroes") ? { heroes } : {}),
       ...(includes("logistics") ? { logistics } : {}),
       ...(includes("director") ? { director } : {}),
+      ...(includes("quests") ? { quests } : {}),
+      ...(includes("personaQa") ? { personaQa } : {}),
       ...(includes("multiplayer") ? { multiplayer } : {}),
+      ...(includes("proceduralJuice") ? { proceduralJuice } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -2078,7 +2377,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, multiplayer }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, quests, multiplayer }
         }
       } : {})
     };
@@ -2096,6 +2395,15 @@ export async function callTool(name, args = {}, ctx = {}) {
   }
 
   if (name === "list_tile_presets") return { presets: Object.values(TILE_PRESETS) };
+
+  if (name === "get_procedural_juice_recipe") {
+    const missionIds = ownDataValue(args, "missionIds");
+    const enemyTypeIds = ownDataValue(args, "enemyTypeIds");
+    return getProceduralJuiceRecipe(ownDataValue(args, "recipeId"), {
+      ...(missionIds === undefined ? {} : { missionIds }),
+      ...(enemyTypeIds === undefined ? {} : { enemyTypeIds })
+    });
+  }
 
   if (name === "explain_validation") {
     if (args.code !== undefined && typeof args.code !== "string") {
@@ -2123,6 +2431,50 @@ export async function callTool(name, args = {}, ctx = {}) {
   const projectDir = resolveDir(args.projectDir, ctx.defaultProjectDir, ctx);
 
   switch (name) {
+    case "get_procedural_juice":
+      return inspectProceduralJuiceAuthoring(projectDir);
+    case "preview_procedural_juice":
+      return unwrapProceduralJuiceAuthoringResult(await previewProceduralJuiceAuthoring(projectDir, {
+        proceduralJuice: ownDataValue(args, "proceduralJuice")
+      }));
+    case "apply_procedural_juice": {
+      const ifRevision = ownDataValue(args, "ifRevision");
+      if (typeof ifRevision !== "string" || ifRevision.length === 0) {
+        throw mechanicsToolError("revision_required", "apply_procedural_juice requires ifRevision from a current preview_procedural_juice result.");
+      }
+      const result = await applyProceduralJuiceAuthoring(projectDir, {
+        proceduralJuice: ownDataValue(args, "proceduralJuice"),
+        ifRevision
+      });
+      const unwrapped = unwrapProceduralJuiceAuthoringResult(result);
+      return result?.backup?.directory
+        ? { ...unwrapped, backup: { directory: `.towerforge/backups/${path.basename(result.backup.directory)}` } }
+        : unwrapped;
+    }
+    case "preview_procedural_juice_event": {
+      const files = loadProjectFiles(projectDir);
+      const request = detachProceduralJuiceEventPreview(args);
+      if (!Object.hasOwn(files.balance?.missions ?? {}, request.missionId)) {
+        throw mechanicsToolError("mission_not_found", `Mission "${String(request.missionId)}" was not found.`);
+      }
+      const event = { ...request.event, originCoord: request.originCoord };
+      const snapshot = {
+        missionId: request.missionId,
+        missionElapsed: request.missionElapsed,
+        coreCoord: request.originCoord,
+        spawnCoord: request.originCoord,
+        enemies: [],
+        towers: [],
+        lastEvents: [event]
+      };
+      const projection = projectProceduralJuicePresentation({
+        visuals: files.visuals,
+        snapshot,
+        previousSnapshot: snapshot,
+        content: { towers: files.balance?.towers ?? {}, enemies: files.balance?.enemies ?? {} }
+      });
+      return { schemaVersion: 1, active: projection.active, projection };
+    }
     case "inspect_tileset": {
       const files = loadProjectFiles(projectDir);
       const tileSet = files.visuals?.tileSets?.[args.tileSetId];
@@ -2229,7 +2581,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -2611,6 +2963,50 @@ export async function callTool(name, args = {}, ctx = {}) {
         simSeconds: Number.isFinite(args.simSeconds) ? args.simSeconds : undefined
       });
       return { projectDir, ...report };
+    }
+
+    case "run_persona_qa":
+      return runPersonaQaWorkerBatch(projectDir, {
+        schemaVersion: args.schemaVersion ?? 1,
+        missionIds: args.missionIds,
+        seeds: args.seeds,
+        personaIds: args.personaIds,
+        simSeconds: args.simSeconds,
+        tickStep: args.tickStep
+      }, { cache: false });
+
+    case "preview_quest_generation": {
+      const validation = await validateProjectDir(projectDir);
+      if (!validation.result.ok) throw mechanicsToolError("validation", "Quest generation preview requires a valid project.");
+      const { engine, content } = await loadContentRegistry(projectDir);
+      const active = engine.resolveActiveQuestMechanics(content, args.missionId);
+      if (!active) {
+        throw mechanicsToolError(
+          "module_inactive",
+          `Mission "${String(args.missionId)}" does not have an active supported quests profile.`
+        );
+      }
+      const selected = engine.selectProceduralQuestsV1(
+        { selectionCount: active.selectionCount, definitions: active.definitions },
+        {
+          seed: args.seed,
+          ...(args.eligibleDefinitionIds === undefined
+            ? {}
+            : { eligibleDefinitionIds: args.eligibleDefinitionIds })
+        }
+      );
+      return {
+        schemaVersion: 1,
+        missionId: args.missionId,
+        profileId: active.profileId,
+        seed: args.seed,
+        dryRun: true,
+        written: false,
+        quests: selected.map((entry) => ({
+          questId: entry.questId,
+          definition: entry.definition
+        }))
+      };
     }
 
     case "propose_balance_patches":
@@ -4975,6 +5371,29 @@ function unwrapCampaignAuthoringResult(result) {
   throw mechanicsToolError(code, issue?.message ?? "The campaign candidate failed validation.");
 }
 
+function unwrapProceduralJuiceAuthoringResult(result) {
+  if (result?.ok) return scrubMechanicsResult(result);
+  if (result?.conflict) {
+    throw mechanicsToolError(
+      "conflict",
+      "The project or visuals source changed after preview; call get_procedural_juice and preview_procedural_juice again."
+    );
+  }
+  const issue = result?.validation?.issues?.find((candidate) => candidate?.severity === "error")
+    ?? result?.validation?.issues?.[0];
+  const passthroughCodes = new Set([
+    "project_version_unsupported",
+    "visuals_version_unsupported",
+    "nested_version_unsupported",
+    "revision_required",
+    "budget_exceeded",
+    "input_unsafe",
+    "invalid_request"
+  ]);
+  const code = passthroughCodes.has(issue?.code) ? issue.code : "validation";
+  throw mechanicsToolError(code, issue?.message ?? "The Procedural Juice candidate failed validation.");
+}
+
 function mechanicsToolError(code, message) {
   const error = new Error(message);
   error.code = code;
@@ -4989,6 +5408,70 @@ function ownDataValue(record, key) {
   } catch {
     return undefined;
   }
+}
+
+function detachProceduralJuiceEventPreview(args) {
+  const missionId = ownDataValue(args, "missionId");
+  const missionElapsed = ownDataValue(args, "missionElapsed");
+  const rawCoord = ownDataValue(args, "originCoord");
+  const rawEvent = ownDataValue(args, "event");
+  if (typeof missionId !== "string" || missionId.length === 0) {
+    throw mechanicsToolError("invalid_request", "missionId must be a non-empty authored project content ID.");
+  }
+  if (!Number.isFinite(missionElapsed) || missionElapsed < 0 || missionElapsed > 1_000_000_000) {
+    throw mechanicsToolError("invalid_request", "missionElapsed must be a finite bounded number.");
+  }
+  const inspectRecord = (value, label, maxProperties) => {
+    let descriptors;
+    let prototype;
+    let symbols;
+    try {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("not a record");
+      descriptors = Object.getOwnPropertyDescriptors(value);
+      prototype = Object.getPrototypeOf(value);
+      symbols = Object.getOwnPropertySymbols(value);
+    } catch {
+      throw mechanicsToolError("input_unsafe", `${label} must be a plain own-data object.`);
+    }
+    if ((prototype !== Object.prototype && prototype !== null) || symbols.length > 0 || Object.keys(descriptors).length > maxProperties) {
+      throw mechanicsToolError("input_unsafe", `${label} exceeds its closed own-data shape.`);
+    }
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (new TextEncoder().encode(key).length > 128) {
+        throw mechanicsToolError("input_unsafe", `${label} contains a property name longer than 128 UTF-8 bytes.`);
+      }
+      if (!("value" in descriptor) || descriptor.enumerable !== true) {
+        throw mechanicsToolError("input_unsafe", `${label}.${key} must be an enumerable data property.`);
+      }
+    }
+    return descriptors;
+  };
+  const coordDescriptors = inspectRecord(rawCoord, "originCoord", 2);
+  if (Object.keys(coordDescriptors).length !== 2 || !coordDescriptors.q || !coordDescriptors.r
+    || !Number.isSafeInteger(coordDescriptors.q.value) || !Number.isSafeInteger(coordDescriptors.r.value)) {
+    throw mechanicsToolError("invalid_request", "originCoord must contain exactly integer q and r fields.");
+  }
+  const eventDescriptors = inspectRecord(rawEvent, "event", 64);
+  const event = {};
+  for (const [key, descriptor] of Object.entries(eventDescriptors)) {
+    const value = descriptor.value;
+    if (!(value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value)))) {
+      throw mechanicsToolError("invalid_request", `event.${key} must be a finite scalar JSON value.`);
+    }
+    if (typeof value === "string" && value.length > 1_024) {
+      throw mechanicsToolError("invalid_request", `event.${key} string values must not exceed 1,024 characters.`);
+    }
+    Object.defineProperty(event, key, { value: Object.is(value, -0) ? 0 : value, enumerable: true, configurable: true, writable: true });
+  }
+  if (typeof event.type !== "string" || event.type.length < 1 || event.type.length > 64) {
+    throw mechanicsToolError("invalid_request", "event.type must be a non-empty string up to 64 characters.");
+  }
+  return {
+    missionId,
+    missionElapsed: Object.is(missionElapsed, -0) ? 0 : missionElapsed,
+    originCoord: { q: coordDescriptors.q.value, r: coordDescriptors.r.value },
+    event
+  };
 }
 
 function defineOwnData(record, key, value) {
