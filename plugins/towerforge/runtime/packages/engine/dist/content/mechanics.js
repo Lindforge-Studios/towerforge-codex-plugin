@@ -5,12 +5,15 @@ export const MECHANICS_MODULE_IDS = [
     "navigation",
     "elevation",
     "physics",
+    "ballistics",
+    "weather",
     "terraforming",
     "roguelite",
     "heroes",
     "logistics",
     "director",
     "quests",
+    "enemyBehaviors",
     "scriptingDx",
     "multiplayer"
 ];
@@ -21,12 +24,15 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
     "navigation",
     "elevation",
     "physics",
+    "ballistics",
+    "weather",
     "terraforming",
     "roguelite",
     "heroes",
     "logistics",
     "director",
     "quests",
+    "enemyBehaviors",
     "multiplayer"
 ];
 export const SHIELD_LIMITS = Object.freeze({

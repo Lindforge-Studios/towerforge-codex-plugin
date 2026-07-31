@@ -30,6 +30,39 @@ export interface GridCoord {
     q: number;
     r: number;
 }
+export type ProjectileTrajectoryV1 = "direct" | "arc";
+export interface ProjectileSnapshotV1 {
+    readonly id: string;
+    readonly sourceCoord: GridCoord;
+    readonly targetCoord: GridCoord;
+    readonly trajectory: ProjectileTrajectoryV1;
+    readonly elapsedUnits: number;
+    readonly travelTimeUnits: number;
+    readonly altitude: number;
+    readonly maxAltitude?: number;
+}
+export interface BallisticsStateV1 {
+    readonly schemaVersion: 1;
+    readonly projectiles: readonly ProjectileSnapshotV1[];
+}
+export interface DestructibleObjectStateV1 {
+    readonly objectId: string;
+    readonly definitionId: string;
+    readonly coord: GridCoord;
+    readonly hp: number;
+    readonly maxHp: number;
+    readonly destroyed: boolean;
+}
+export interface DestructibleStateV1 {
+    readonly schemaVersion: 1;
+    readonly objects: readonly DestructibleObjectStateV1[];
+}
+export interface BallisticsStateV2 {
+    readonly schemaVersion: 2;
+    readonly projectiles: readonly ProjectileSnapshotV1[];
+    readonly destructibles: DestructibleStateV1;
+}
+export type BallisticsState = BallisticsStateV1 | BallisticsStateV2;
 export type GridDefinition = {
     kind: "hex";
     layout: "odd-r";
@@ -729,6 +762,30 @@ export type GameEvent = {
     towerId: string;
     mode: TowerTargetMode;
 } | {
+    type: "projectileMissed";
+    projectileId: string;
+    targetEnemyId: string;
+    targetCoord: GridCoord;
+    reason: "target_missing" | "target_moved" | "component_unavailable";
+} | {
+    type: "projectileBlocked";
+    projectileId: string;
+    targetCoord: GridCoord;
+    blockerCoord: GridCoord;
+    terrainId: string;
+    blockerTag: string;
+    projectileAltitude: number;
+    obstacleTop: number;
+} | {
+    type: "projectileRicocheted";
+    projectileId: string;
+    bounceCount: number;
+    surfaceKind: "terrain" | "armor";
+    surfaceId: string;
+    collisionCoord: GridCoord;
+    nextSourceCoord: GridCoord;
+    nextTargetCoord: GridCoord;
+} | {
     type: "enemyKilled";
     enemyId: string;
     enemyTypeId: string;
@@ -794,6 +851,37 @@ export type GameEvent = {
     type: "waveStarted";
     waveIndex: number;
 } | {
+    type: "weatherStarted";
+    profileId: string;
+    waveIndex: number;
+    choiceId: string;
+    weatherId: string;
+    zoneId: string;
+} | {
+    type: "weatherEnded";
+    profileId: string;
+    waveIndex: number;
+    choiceId: string;
+    weatherId: string;
+    zoneId: string;
+    reason: "wave_cleared" | "wave_changed";
+} | {
+    type: "weatherEffectApplied";
+    profileId: string;
+    waveIndex: number;
+    choiceId: string;
+    weatherId: string;
+    zoneId: string;
+    effectId: string;
+    kind: "periodic_damage" | "status";
+    applicationOrdinal: number;
+    affectedCount: number;
+} | {
+    type: "weatherBudgetExceeded";
+    profileId: string;
+    waveIndex: number;
+    limit: number;
+} | {
     type: "directorDecision";
     waveIndex: number;
     counterId: string;
@@ -840,7 +928,31 @@ export type GameEvent = {
     enemyId: string;
     enemyTypeId: string;
     damage: number;
-} | EnemyShieldChangedEvent | EnemyMarkChangedEvent | EnemyExposureChangedEvent | EnemyReactionTriggeredEvent | ReactionBudgetExceededEvent | {
+} | EnemyShieldChangedEvent | {
+    type: "bossComponentDamaged" | "bossComponentDestroyed";
+    enemyId: string;
+    enemyTypeId: string;
+    componentId: string;
+    sourceKind: import("./damage.js").DamageSourceRef["kind"];
+    previousHp: number;
+    currentHp: number;
+    maxHp: number;
+    hpDamage: number;
+    previousShield: number;
+    currentShield: number;
+    shieldCapacity: number;
+    shieldAbsorbed: number;
+} | {
+    type: "vanguardDamageIntercepted";
+    cohortId: string;
+    protectedEnemyId: string;
+    protectedEnemyTypeId: string;
+    vanguardEnemyId: string;
+    vanguardEnemyTypeId: string;
+    sourceKind: "tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy";
+    requestedAmount: number;
+    originalComponentId: string | null;
+} | EnemyMarkChangedEvent | EnemyExposureChangedEvent | EnemyReactionTriggeredEvent | ReactionBudgetExceededEvent | {
     type: "enemyArmorBlocked";
     towerId: string;
     enemyId: string;
@@ -910,6 +1022,21 @@ export type GameEvent = {
     transitionId: string;
     fromStatePath: string;
     toStatePath: string;
+} | {
+    type: "destructibleObjectDamaged";
+    projectileId: string;
+    objectId: string;
+    definitionId: string;
+    coord: GridCoord;
+    fromHp: number;
+    toHp: number;
+    damage: number;
+} | {
+    type: "destructibleObjectDestroyed";
+    projectileId: string;
+    objectId: string;
+    definitionId: string;
+    coord: GridCoord;
 } | {
     type: "scriptSignal";
     scriptId: string;
@@ -1299,6 +1426,34 @@ export interface QuestSnapshotV1 {
     readonly profileId: string;
     readonly entries: readonly QuestProgressSnapshotV1[];
 }
+export interface BossComponentRuntimeStateV1 {
+    readonly hp: number;
+    readonly maxHp: number;
+    readonly shield?: {
+        readonly current: number;
+        readonly capacity: number;
+        readonly regenerationDelayRemaining: number;
+    };
+}
+/** Active-only authoritative state for the opt-in enemyBehaviors v1 module. */
+export interface EnemyBehaviorsStateV1 {
+    readonly schemaVersion: 1;
+    readonly components: Readonly<Record<string, Readonly<Record<string, BossComponentRuntimeStateV1>>>>;
+    readonly formations?: {
+        readonly schemaVersion: 1;
+        readonly enemies: Readonly<Record<string, {
+            readonly cohortId: string;
+            readonly role: "vanguard" | "body" | "support";
+        }>>;
+        readonly protection?: {
+            readonly schemaVersion: 1;
+            readonly cohorts: Readonly<Record<string, {
+                readonly radius: number;
+                readonly sourceKinds: readonly ("tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy")[];
+            }>>;
+        };
+    };
+}
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -1348,6 +1503,13 @@ export interface GameSnapshot {
     logistics?: LogisticsSnapshot;
     director?: DirectorSnapshotV1;
     quests?: QuestSnapshotV1;
+    enemyBehaviors?: EnemyBehaviorsStateV1;
+    ballistics?: BallisticsState;
+    weather?: {
+        readonly schemaVersion: 1;
+        readonly profileId: string;
+        readonly active: import("../content/weather-mechanics.js").WeatherRuntimeOccurrenceV1 | null;
+    };
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

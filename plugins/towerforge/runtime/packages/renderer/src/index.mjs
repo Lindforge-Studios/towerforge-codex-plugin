@@ -20,6 +20,17 @@ import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
 import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
+import { projectEnemyComponentsPresentation } from "./enemy-components-presentation.mjs";
+import { projectEnemyFormationsPresentation } from "./enemy-formations-presentation.mjs";
+import { projectVanguardProtectionPresentation } from "./vanguard-protection-presentation.mjs";
+import { projectDestructibleEnvironmentPresentation } from "./destructible-environment-presentation.mjs";
+import { projectWeatherPresentation } from "./weather-presentation.mjs";
+import {
+  projectBallisticsEventPresentation,
+  projectBallisticsPresentation,
+  projectBallisticsPresentationPoint,
+  projectBallisticsRicochetEventPresentation
+} from "./ballistics-presentation.mjs";
 import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
@@ -37,6 +48,12 @@ export * from "./director-presentation.mjs";
 export * from "./quest-presentation.mjs";
 export * from "./procedural-juice-presentation.mjs";
 export * from "./procedural-juice-runtime.mjs";
+export * from "./enemy-components-presentation.mjs";
+export * from "./enemy-formations-presentation.mjs";
+export * from "./vanguard-protection-presentation.mjs";
+export * from "./ballistics-presentation.mjs";
+export * from "./destructible-environment-presentation.mjs";
+export * from "./weather-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -73,6 +90,8 @@ export class TowerForgeCanvasRenderer {
     this.prevEnemyPos = new Map();
     this.prevTowerPos = new Map();
     this.prevCombat = null;
+    this.enemyComponentsByEnemyId = new Map();
+    this.enemyFormationsByEnemyId = new Map();
     this.prevJuiceSnapshot = null;
     this.proceduralJuiceRuntime = null;
     this.proceduralJuiceWorldSnapshots = null;
@@ -139,6 +158,11 @@ export class TowerForgeCanvasRenderer {
       frame: this.proceduralJuiceFrame,
       deltaMs: dt * 1_000
     }) ?? authoritativeSnapshot;
+    const ballisticsPresentation = projectBallisticsPresentation(snapshot);
+    const destructibleEnvironmentPresentation = projectDestructibleEnvironmentPresentation(snapshot);
+    const weatherPresentation = projectWeatherPresentation(snapshot);
+    const ballisticsEvents = projectBallisticsEventPresentation(presentationSnapshot);
+    const ballisticsRicochetEvents = projectBallisticsRicochetEventPresentation(presentationSnapshot);
 
     this.lastGrid = snapshot.grid ?? this.lastGrid;
     const geom = this.geometry(snapshot.tiles ?? [], this.lastGrid);
@@ -150,6 +174,20 @@ export class TowerForgeCanvasRenderer {
     }
     const towerPositions = new Map();
     for (const tower of snapshot.towers ?? []) towerPositions.set(tower.id, this.center(tower.coord, geom));
+    this.enemyComponentsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snapshot).rows) {
+      const existing = this.enemyComponentsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else this.enemyComponentsByEnemyId.set(row.enemyId, [row]);
+    }
+    this.enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snapshot).rows.map((row) => [row.enemyId, row])
+    );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snapshot).cues;
+    this.vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
@@ -161,6 +199,9 @@ export class TowerForgeCanvasRenderer {
 
     const terraformingPresentation = projectTerraformingPresentation(snapshot);
     this.drawCachedTileLayer(snapshot.tiles ?? [], geom, mapModel, terraformingPresentation);
+    if (weatherPresentation.active) {
+      this.drawWeatherPresentation(weatherPresentation, snapshot.tiles ?? [], geom);
+    }
     for (const tile of snapshot.temporaryWaterTiles ?? []) {
       const p = this.center(tile, geom);
       this.drawCell(p.x, p.y, geom.r * 0.74, "rgba(66,123,136,.58)", geom);
@@ -168,6 +209,9 @@ export class TowerForgeCanvasRenderer {
     this.drawElevationPresentation(terraformingPresentation?.elevationPresentation ?? projectElevationCues(snapshot.elevation), geom);
     this.drawNavigationOverlay(geom);
     if (this.focusCoord) this.drawFocusCell(this.focusCoord, geom);
+    if (destructibleEnvironmentPresentation.active) {
+      this.drawDestructibleEnvironmentPresentation(destructibleEnvironmentPresentation, geom);
+    }
     for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
     const heroPresentation = projectHeroesPresentation(snapshot);
     for (const hero of heroPresentation.units) {
@@ -175,6 +219,9 @@ export class TowerForgeCanvasRenderer {
       this.drawHero(hero, geom);
     }
     for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
+    if (ballisticsPresentation.active) this.drawBallisticsPresentation(ballisticsPresentation, geom);
+    this.drawBallisticsEvents(ballisticsEvents, geom);
+    this.drawBallisticsRicochetEvents(ballisticsRicochetEvents, geom);
     for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
     this.drawEffects(geom);
     this.drawProceduralJuice(geom);
@@ -186,6 +233,106 @@ export class TowerForgeCanvasRenderer {
     this.prevTowerPos = towerPositions;
     this.prevCombat = authoritativeSnapshot.combat ?? null;
     this.prevJuiceSnapshot = authoritativeSnapshot;
+  }
+
+  drawBallisticsPresentation(ballisticsPresentation, geom) {
+    this.ctx.save();
+    this.ctx.fillStyle = "#ffd27a";
+    this.ctx.strokeStyle = "rgba(255, 244, 196, .72)";
+    this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
+    for (const projectile of ballisticsPresentation.projectiles) {
+      const point = projectBallisticsPresentationPoint(
+        projectile,
+        (coord) => this.center(coord, geom),
+        Math.max(1, geom.r * 0.18)
+      );
+      if (!point) continue;
+      this.ctx.beginPath();
+      this.ctx.arc(point.x, point.y, Math.max(2, geom.r * 0.13), 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawDestructibleEnvironmentPresentation(presentation, geom) {
+    this.ctx.save();
+    for (const row of presentation.rows) {
+      const point = this.center(row.coord, geom);
+      const radius = Math.max(3, geom.r * 0.38);
+      this.ctx.globalAlpha = row.destroyed ? 0.42 : 0.95;
+      this.ctx.fillStyle = row.destroyed ? "#605d55" : "#9b7653";
+      this.ctx.strokeStyle = row.destroyed ? "#a5a095" : "#f0d3a8";
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
+      this.ctx.fillRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
+      this.ctx.strokeRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
+      if (row.destroyed) {
+        this.ctx.beginPath();
+        this.ctx.moveTo(point.x - radius, point.y - radius);
+        this.ctx.lineTo(point.x + radius, point.y + radius);
+        this.ctx.moveTo(point.x + radius, point.y - radius);
+        this.ctx.lineTo(point.x - radius, point.y + radius);
+        this.ctx.stroke();
+      } else if (row.hpRatio < 1) {
+        const width = radius * 2;
+        const top = point.y + radius + Math.max(2, geom.r * 0.08);
+        this.ctx.globalAlpha = 1;
+        this.ctx.fillStyle = "#1b1d18";
+        this.ctx.fillRect(point.x - radius, top, width, Math.max(2, geom.r * 0.08));
+        this.ctx.fillStyle = row.hpRatio > 0.35 ? "#d7b06f" : "#df6a59";
+        this.ctx.fillRect(point.x - radius, top, width * row.hpRatio, Math.max(2, geom.r * 0.08));
+      }
+    }
+    this.ctx.restore();
+  }
+
+  drawWeatherPresentation(presentation, mapTiles, geom) {
+    const tiles = presentation.zoneKind === "all_map" ? mapTiles : presentation.tiles;
+    this.ctx.save();
+    this.ctx.globalCompositeOperation = "screen";
+    for (const tile of tiles) {
+      const point = this.center(tile, geom);
+      this.drawCell(point.x, point.y, geom.r * 0.76, "rgba(108, 161, 190, .14)", geom);
+    }
+    this.ctx.restore();
+  }
+
+  drawBallisticsEvents(events, geom) {
+    if (events.length === 0) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#ff8b5c";
+    this.ctx.lineWidth = Math.max(2, geom.r * 0.11);
+    for (const event of events) {
+      const point = this.center(event.blockerCoord, geom);
+      const radius = Math.max(3, geom.r * 0.32);
+      this.ctx.beginPath();
+      this.ctx.moveTo(point.x - radius, point.y - radius);
+      this.ctx.lineTo(point.x + radius, point.y + radius);
+      this.ctx.moveTo(point.x + radius, point.y - radius);
+      this.ctx.lineTo(point.x - radius, point.y + radius);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawBallisticsRicochetEvents(events, geom) {
+    if (events.length === 0) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#76e6ff";
+    this.ctx.fillStyle = "#d6f9ff";
+    this.ctx.lineWidth = Math.max(2, geom.r * 0.1);
+    for (const event of events) {
+      const collision = this.center(event.collisionCoord, geom);
+      const target = this.center(event.nextTargetCoord, geom);
+      this.ctx.beginPath();
+      this.ctx.moveTo(collision.x, collision.y);
+      this.ctx.lineTo(target.x, target.y);
+      this.ctx.stroke();
+      this.ctx.beginPath();
+      this.ctx.arc(collision.x, collision.y, Math.max(2, geom.r * 0.12), 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    this.ctx.restore();
   }
 
   proceduralJuiceEnabled() {
@@ -919,6 +1066,37 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillRect(p.x - geom.r * 0.45, p.y - geom.r * 0.62, geom.r * 0.9 * hpRatio, 4);
     const shield = resolveShieldPresentation(snapshot, "enemy", enemy.id);
     if (shield) this.drawShieldRing(p, geom.r * 0.52, shield);
+    const formation = this.enemyFormationsByEnemyId.get(enemy.id);
+    if (formation) {
+      const color = formation.role === "vanguard" ? "#f0b45b"
+        : formation.role === "support" ? "#73bfe8" : "#a79bdc";
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.46, 0, Math.PI * 2);
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.07);
+      this.ctx.stroke();
+    }
+    if (this.vanguardProtectionCueEnemyIds?.has(enemy.id)) {
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.58, 0, Math.PI * 2);
+      this.ctx.strokeStyle = "#f7d774";
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.09);
+      this.ctx.stroke();
+    }
+    const components = this.enemyComponentsByEnemyId.get(enemy.id) ?? [];
+    if (components.length > 0) {
+      const width = geom.r * 0.9;
+      const cellWidth = width / components.length;
+      for (let index = 0; index < components.length; index += 1) {
+        const row = components[index];
+        const x = p.x - width / 2 + index * cellWidth;
+        const y = p.y + geom.r * 0.48;
+        this.ctx.fillStyle = "#1b1d18";
+        this.ctx.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+        this.ctx.fillStyle = row.destroyed ? this.theme.danger : this.theme.tower;
+        this.ctx.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+      }
+    }
     this.drawExposureBadges(p, geom, resolveExposurePresentation(snapshot, enemy.id));
     this.drawMarkBadges(p, geom, resolveMarkPresentation(snapshot, enemy.id));
   }

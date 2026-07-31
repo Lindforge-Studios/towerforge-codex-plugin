@@ -4,10 +4,10 @@
   "towerforgeVersion": "0.4.0",
   "mcpServerVersion": "0.4.0",
   "mcpProtocolVersion": "2024-11-05",
-  "agentGuideVersion": 37,
+  "agentGuideVersion": 46,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "e505e4fca33cd5629fb2e71bb38e624b44a21e25",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/e505e4fca33cd5629fb2e71bb38e624b44a21e25",
+  "sourceCommit": "318671c25f79f79f6092ff9abe77e443f1093bba",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/318671c25f79f79f6092ff9abe77e443f1093bba",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -810,8 +810,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/build.mjs",
-      "size": 186141,
-      "sha256": "105fd68e2ef71927e8e6b3d4b20c04c189632d5809c2067247d9bfe56aa8bcfc"
+      "size": 192297,
+      "sha256": "f123234788fdcd07cb336465aaab6d1fb4eee6260dc0d0fcdb3de6be9df433d1"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/create.mjs",
@@ -845,13 +845,18 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/content-recipes.mjs",
-      "size": 16400,
-      "sha256": "adffb202825007ea585a064298bdc5ea25707610e59ef99a04082010d8670bde"
+      "size": 16684,
+      "sha256": "2c550f0bafecba9a32f1c01234455d6175246aabf4dcd4515f48b13ea0d4aaf4"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/create-project.mjs",
       "size": 4350,
       "sha256": "6896570c5615143d14bb0679366071928560496a2d0581572f5b20d2b103c571"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/cli/lib/destructible-environment-authoring.mjs",
+      "size": 19029,
+      "sha256": "b0087973ca68912c642c0e04984c81e5dbb0ef4b91be4a973620d07174b935fc"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/generated-assets.mjs",
@@ -860,8 +865,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/map-compiler.mjs",
-      "size": 17739,
-      "sha256": "9387d9c254826698ebfddc519bddc8b2cc709789d06ca0e8df65076fa26c12ba"
+      "size": 24862,
+      "sha256": "f2530cb36db46068bd6f610f0d564d25a58cb53bc19b68a83cda0c57aabb0a54"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/map-elevation-authoring.mjs",
@@ -870,13 +875,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/mechanics-authoring.mjs",
-      "size": 46692,
-      "sha256": "f6058f2f89080b0504fdbe9fc7264a23cf4d348bfb70298b193e78e495b113a8"
+      "size": 47192,
+      "sha256": "583b03a7a2a64dfccb1b45d0967976c640d2aece7b3496064847b2f6aa70d57d"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/mechanics-recipes.mjs",
-      "size": 73671,
-      "sha256": "c7dfef05da4e0f2f6841fe2d5a0490d6b3f6629b6c698295cd4330a35f99fe9b"
+      "size": 90251,
+      "sha256": "c895ca7592a5d7d35660700ffa3d3c3d7c3baed93d4331323ed91780dd04a3df"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/packaging.mjs",
@@ -905,8 +910,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-loader.mjs",
-      "size": 33195,
-      "sha256": "0a35b52aed000f17acbea7ba2269512430f8a8a5f3c243eaa64259e6ed40836b"
+      "size": 33530,
+      "sha256": "c6c4b836971245321f86cbd18bfa411a45bbb02e248e2d3f7472810698bc9529"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-migrations.mjs",
@@ -920,8 +925,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-schema.mjs",
-      "size": 56470,
-      "sha256": "130c97d2e599e3246720970d25e8739ca7d37a0a9e4e8d10cf45ebf58d96b393"
+      "size": 57263,
+      "sha256": "4cb0641ed59285460bd0b94136b36afc9368a70f6f5cd2f098264e3333595d31"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-scripts.mjs",
@@ -1064,6 +1069,16 @@
       "sha256": "6e7b88b332afa239ed392c858ef4fd1bc61a8ffd8a1a22f9929e6c4d8970d54f"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/ballistics-mechanics.d.ts",
+      "size": 7627,
+      "sha256": "41f066c78c3691369ccc8610ceca2aa60b70a0d071b289caa5aa35f4770556b3"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/ballistics-mechanics.js",
+      "size": 20624,
+      "sha256": "f20a83c387a2440974d2ffafcf4ec756ccc14b0157daaa3dffbb69e7a0fc5afc"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/combat-mechanics.d.ts",
       "size": 1979,
       "sha256": "5a708716214382bdb749485bb681d6a71fce9a951ac87d7b4103641f58f5dac3"
@@ -1094,6 +1109,16 @@
       "sha256": "e337973b66b7ef325f333a80367f6b81bb5668142151f9528d33d6ef411d011e"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/enemy-behaviors-mechanics.d.ts",
+      "size": 3739,
+      "sha256": "d87372bb3085dbd2f0a821b7d343cc52363a18b78a4b21d7b4f69eefbb1ffd14"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/enemy-behaviors-mechanics.js",
+      "size": 20433,
+      "sha256": "f3c827e46f088819c68893acc15bf1d2565e60986c8ef02dfd0115ca050d1c53"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/heroes-mechanics.d.ts",
       "size": 45769,
       "sha256": "51d25798220bf1f72cad931ec75173e686f5292232041cdd71cdcb6c978dde52"
@@ -1115,13 +1140,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/mechanics.d.ts",
-      "size": 5466,
-      "sha256": "01b8a42c112f7772dcd43788b2a90ee7ee0274e0c02a3dcd071c18865933ac5a"
+      "size": 5552,
+      "sha256": "a61499b9ca082b340e8b87d6ab2b69ba133f81aa8cc0f8b962720d9f552d0c16"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/mechanics.js",
-      "size": 9341,
-      "sha256": "17c20ea5e549f400c85069da8b3f334d4ac263d3ffd271a413e243dbc3ac3069"
+      "size": 9451,
+      "sha256": "69044dfd031be9e0af851ebde5841abc8271e86e78fff30f289e9e8115a1435a"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/multiplayer-mechanics.d.ts",
@@ -1195,13 +1220,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/schema-descriptor.d.ts",
-      "size": 25827,
-      "sha256": "bba72850463d41dbefc6ec5001099d7ed114a140545ce9494eb762ea54ed8935"
+      "size": 28996,
+      "sha256": "44bddcfe65b4713551b4a39fd560cd84d16826c6521b4d8e97ed29950c8cbb8b"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/schema-descriptor.js",
-      "size": 20613,
-      "sha256": "f0a3fea86f5747f01f7b75082c92c51fa68275e9fb12b70fee76dcd03348f444"
+      "size": 22948,
+      "sha256": "4bc4a5ee62cd415374b7d30817b3dbdb5dbc79eedf1a71158029b53ebedf1ecb"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/terraforming-mechanics.d.ts",
@@ -1220,8 +1245,18 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/content/validate.js",
-      "size": 290868,
-      "sha256": "0121bb61c4d2696a34922e7353ec530b3f1178b31026b271dd4ad26b04e70b2f"
+      "size": 331782,
+      "sha256": "b300307ec82b1f017ee7bf4d5ba7c23336cc7904396f0f9682bf899f068cba4a"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/weather-mechanics.d.ts",
+      "size": 6193,
+      "sha256": "444b9f7237ff14cd9e8d3b7a164564f4f70dcd0a2b13101135f2c1198cde2839"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/content/weather-mechanics.js",
+      "size": 29106,
+      "sha256": "8aadeed84b2debbf608d8f4c21980e526f99beb3a3fe2bf831ac4a96fbe928c5"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/generation/procedural-map.d.ts",
@@ -1235,13 +1270,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/index.d.ts",
-      "size": 2654,
-      "sha256": "afb561df3fb74962cd1d41aa8d6dd5dba0da845b223965a9cc05d5d850895a7f"
+      "size": 3031,
+      "sha256": "e9e80a8039d5082a6b51a85fc8c14329394adfb3a0b69d2bbcc33d95e76b60ca"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/index.js",
-      "size": 2834,
-      "sha256": "802ad8d242de6199306aeb69b170a8f9ee1d8dcba25527124fabd217d5ff81a8"
+      "size": 3211,
+      "sha256": "2fc3dc4c3c019d7d4d7a4c17c819a7d94a499b95339d5777efa241dac005240e"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/multiplayer/asymmetric-session.d.ts",
@@ -1365,28 +1400,28 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/graph.d.ts",
-      "size": 3084,
-      "sha256": "354a81920f30c0a148288856500895e02d89dbfce9ad2fe4c0ba139912f3c26d"
+      "size": 3093,
+      "sha256": "8170e9738187ce5de941ee2cf2825a75179b320ecc89322b68ab6a4d86aaacf8"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/graph.js",
-      "size": 18428,
-      "sha256": "87926ccd8201e8fc02b5140da9093847252e95e83c1cfe6e4599e7abd0a5fd02"
+      "size": 18739,
+      "sha256": "5d8aa898dd94b7b858867af7e907ab974f2b5d2de8a03baed6ec6cdd51798fce"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/schema-descriptor.d.ts",
-      "size": 45394,
-      "sha256": "e6e6fe1c981fa4b02b274aeeb42afa4b265a7e54131b95e7ea7128b900812e94"
+      "size": 49558,
+      "sha256": "38aced5bb9a5fef02644500f627a5e5b7d76dc939b88466ba226160933a9a459"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/schema-descriptor.js",
-      "size": 17947,
-      "sha256": "3eab02cd7c6b12ed4004a53537247e6981994e0b16408f398a0520990ee07371"
+      "size": 20873,
+      "sha256": "2f852091f59c75535db461c361849ed994f69a536fda7cd79b7206429df9f716"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/state-machine.d.ts",
-      "size": 2217,
-      "sha256": "58b91e1af253396d2702b71738fd31ae82abb0f77dd3354ba17cb208faa7b2e7"
+      "size": 2277,
+      "sha256": "90a49defce2f520758408a6f2d659b8551a7d0324cdb4f1e0db335e89e2b5a87"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/state-machine.js",
@@ -1405,8 +1440,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/types.d.ts",
-      "size": 8431,
-      "sha256": "64a45824d7ebc1ba3cbc199b90d7596fa7bf8f5000eb37fa6273ed5fea3dd63f"
+      "size": 8483,
+      "sha256": "474904e3f48de03c7b154c2a5b266e106f58715cdf38e2bda472149d17dc3677"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/types.js",
@@ -1420,8 +1455,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/scripting/validate.js",
-      "size": 55628,
-      "sha256": "72157455d0f8a174a8b72a9503898fd52548187f446fcb622dcc2047c1d58be5"
+      "size": 55704,
+      "sha256": "7a786d86ca69beef5dbd74158a594220af571ead0a3121f3063343f85eb94a1b"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/auto-balancer.d.ts",
@@ -1445,8 +1480,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/checkpoint.d.ts",
-      "size": 11362,
-      "sha256": "198429153b4dcb5bbbe75873055c629d62a8ce4b513da1b12a4d658bbece49f9"
+      "size": 15130,
+      "sha256": "e7808bdb10181857430cdec4f0717c1f010e8ea38d09be234a5a24460d941afb"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/checkpoint.js",
@@ -1475,13 +1510,23 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/damage.d.ts",
-      "size": 3546,
-      "sha256": "6c215fc4499bc77b3c148779b8994ee95c7c01fd110ca72a6470283ec0e213ad"
+      "size": 4010,
+      "sha256": "7a3f136df7dbce01d06cc4dd33ccd49a01e73cfa1a3cf3a2aa5c247f8db130a2"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/damage.js",
-      "size": 15987,
-      "sha256": "7829d1200bf4afa2b6638e97b29d6de3fa18741dea11e82eb2ff75e3b18571f7"
+      "size": 16806,
+      "sha256": "f0ba730c54a4ae7a3bc368c35c14239d1edee91b823d3747eaf3e126bae8980c"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/destructible-line-of-sight.d.ts",
+      "size": 942,
+      "sha256": "61ddbf4860a5010e26094e507dc926c130971f4ed5b62f9ed0588782ae298b23"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/destructible-line-of-sight.js",
+      "size": 7908,
+      "sha256": "747397c478c46e799550624139a70401eaf5d08b70563f66236fc3c75b764e01"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/director.d.ts",
@@ -1502,6 +1547,16 @@
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/displacement.js",
       "size": 2651,
       "sha256": "1b8c3fdbaf86d3f1351fde5feb575255f94231ebccd9d55c91e5735e9b2437e2"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/formation-steering.d.ts",
+      "size": 1757,
+      "sha256": "8d83a0b05dfe605743154c76ea149d60ef73dad37146fdba649db006a17b277b"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/formation-steering.js",
+      "size": 12417,
+      "sha256": "e97ed30c1abf72cd9f5c4cdca8df3ddd1105fc37f09d507ba167d579faf13781"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/headless.d.ts",
@@ -1555,13 +1610,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/line-of-sight.d.ts",
-      "size": 2002,
-      "sha256": "26d9fec4a3879947073d721d8c33cc01a75f0f69ebacefda6285c91a27a1432d"
+      "size": 4036,
+      "sha256": "c431c9fc565f4c2f1aa344717f3c9166b53f87b85c2bff7ae26d9bbcb2de623c"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/line-of-sight.js",
-      "size": 8627,
-      "sha256": "ed7d3beb567c9dcf503c7a17fbb4f458f2a49b531bc3e08fbd5385888c8995b5"
+      "size": 15005,
+      "sha256": "e5f7a698351c0cc83632573ba42f134247bf4cb980efe149e694f04ec0ba6107"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/logistics-ammunition.d.ts",
@@ -1595,13 +1650,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/map.d.ts",
-      "size": 3781,
-      "sha256": "e1893110067d2b167f03f61894e287623f122d48bea8ebab1b2ca51d260e29b3"
+      "size": 4657,
+      "sha256": "6d355e7d82e7266d57fe42afe4c607c2f446d047cdaa0c3c487463dd8daf999a"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/map.js",
-      "size": 15124,
-      "sha256": "db66796833e52a9255b0efa64331b211084fc3d69c95fbb76825af8636ea7068"
+      "size": 23693,
+      "sha256": "93f8a293539253bd8620ffaff2b1c04acb20a698e93c025f92eccf8fcee92e25"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/modifiers.d.ts",
@@ -1664,6 +1719,16 @@
       "sha256": "6669cbbc7b79962cf7598aa833fb93cca9f529f9c39c6024accb722c92136a56"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/persistent-terrain-transaction.d.ts",
+      "size": 2995,
+      "sha256": "cb6ea2d1edcb944b9a165bccc67ff312ec95a66fea9de7cc3b8dfcff912505c2"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/persistent-terrain-transaction.js",
+      "size": 10183,
+      "sha256": "17b21e5f7c859b95871f6a821ca062408c4a7ea5ebd79b718a36a89b00d5dbcd"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/persona-qa.d.ts",
       "size": 2558,
       "sha256": "0cf97b031ff3461a54d0641e586bcc16dee689e908e4b85b2c8bd38d1ca32c58"
@@ -1674,9 +1739,39 @@
       "sha256": "4f252876cebe48755e061ec9b9e963d3a7fb2099ab7effa6d363951c2131a22e"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-clearance.d.ts",
+      "size": 1734,
+      "sha256": "3e8fe580279d8a1984a5168d4090d95efd8ce70dbcb7fba0fecfcab9d8995908"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-clearance.js",
+      "size": 3316,
+      "sha256": "6096f5f7524774530b36c99e0b1942ac947aacb7d271bfec4e5abeee03f72cc4"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-destructible.d.ts",
+      "size": 3353,
+      "sha256": "b757cee572e43440b095c087c1ecfe8309c7961b22ddc84cdb05b79ad21bcb4f"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-destructible.js",
+      "size": 19426,
+      "sha256": "bb7837997cb252fff87a83c3e046bc3587721329390ecdfe105593a5308d9186"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-ricochet.d.ts",
+      "size": 875,
+      "sha256": "59a020416dc40ea394bc45ec4767737326f06ba0316fd783fa3d1f01105cf411"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/projectile-ricochet.js",
+      "size": 4415,
+      "sha256": "087b30c48efad177d51e423622df2d80bf1c6012031ea9702a45ce34251b1066"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/reactions.d.ts",
-      "size": 6461,
-      "sha256": "77fedb6fa34fbd482213d3a6ae48671510fe2160993653abe00e0a3e8dc05217"
+      "size": 6473,
+      "sha256": "cd3ed7224fd029745d30ddb03054294d4b0e0b9e86a73ab0ccff83a213c983d5"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/reactions.js",
@@ -1795,13 +1890,13 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/TowerDefenseGame.d.ts",
-      "size": 23225,
-      "sha256": "787ac97c8a4bed2dc253fcb1fc68faf6be9652636aa153ecf839ef694122b4c9"
+      "size": 26060,
+      "sha256": "1edb79945320c59d187f5d32b1c5830b16b570887a2d61e2c0333cb23a5ac353"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/TowerDefenseGame.js",
-      "size": 690081,
-      "sha256": "e8bb7c0ea636f092e36442d40b1684b708dbfbaebbcb95061309906ec6a5e3ee"
+      "size": 835103,
+      "sha256": "0e85b66be4eff038ccda7005a3636cda034c82b7274323170f946b70ac301b6a"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/towerscript-debugger.d.ts",
@@ -1815,8 +1910,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/types.d.ts",
-      "size": 43511,
-      "sha256": "cb43b1dd4488e6bff2dd8ddb7c3cea6928be5399a229688c741b4f4bd8809efd"
+      "size": 48439,
+      "sha256": "433895bf7065cfd4e56dc1d0c269d7d517ce075ecf1b0b8558db124a897f2413"
     },
     {
       "path": "plugins/towerforge/runtime/packages/engine/dist/simulation/types.js",
@@ -1825,8 +1920,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/agent-instructions.mjs",
-      "size": 24646,
-      "sha256": "16f95e20029b0630339c7e83ac91d72d46564bd5e55608fe6af59d3309304ede"
+      "size": 33478,
+      "sha256": "924aed7108e7d47e8dd3dd8d2c5e8b045537218de0094a99c65a7d2564561687"
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/protocol.mjs",
@@ -1840,8 +1935,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/tools.mjs",
-      "size": 262333,
-      "sha256": "7b550a1e24adf61643fe76a91570efc5ad870a69acfd5a8ce2fe1e833f9b82b3"
+      "size": 271277,
+      "sha256": "2141f49b3de0cd9b2229ce29c70b3eb9a463efb5d00d3bdbf62a2e07cdf9429e"
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/workspace-session.mjs",
@@ -1874,6 +1969,11 @@
       "sha256": "0787ec547da9b1cec79cd5014f5783ac81aec1628891b4aeba48e410c9a2d1a8"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/ballistics-presentation.mjs",
+      "size": 11002,
+      "sha256": "a1e1916f85e76efb872196e92f3a451f3f9a7de8de3ed151b05fd7a165c609a8"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/renderer/src/campaign-presentation.mjs",
       "size": 12584,
       "sha256": "0b3718eb47c4879cacfdd1bbc7a1019180a3574039e363a542806726d83727d9"
@@ -1882,6 +1982,11 @@
       "path": "plugins/towerforge/runtime/packages/renderer/src/combat-presentation.mjs",
       "size": 19442,
       "sha256": "aa4a21141b7a6f43a90df39ebbe6998a1423a6d695b75cda680f21ebee4738b3"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/destructible-environment-presentation.mjs",
+      "size": 5020,
+      "sha256": "db7daac6d46f9e129b82dbdcb290bb0512854d8ad64a6ef25e457ccbec583033"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/director-presentation.mjs",
@@ -1894,14 +1999,24 @@
       "sha256": "cf24b60b114a4dddbbcc9449633cc16428d18bcc5b13b99d5dbac340581d13f5"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/enemy-components-presentation.mjs",
+      "size": 5036,
+      "sha256": "f06f261fe1cba4ce19a800e62ae223e1b901169b7688eb559dcd48a1d63f86c9"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/enemy-formations-presentation.mjs",
+      "size": 3697,
+      "sha256": "7909ec3faf030bf6096c879c6de41558d452e57d42856de07a3435175a7249c4"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/renderer/src/heroes-presentation.mjs",
       "size": 21450,
       "sha256": "b2bf7814087d6d88b52abc53f2cff9bce3702ffab97b8ae30c95adc441fadb19"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/index.mjs",
-      "size": 51416,
-      "sha256": "a2662b02a6141ba6cc28e4bf35b4faaf866a35a09f4e7f72090bb629006742ba"
+      "size": 59455,
+      "sha256": "ac4f9ba49e626c26ef3853e68ab0ecb67c8b514b7dbda8466f64b1459016ec98"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/line-of-sight-presentation.mjs",
@@ -1925,8 +2040,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/procedural-juice-presentation.mjs",
-      "size": 23236,
-      "sha256": "4539ed57186453fdad8ee196c336e00523c103f9062a12724c8632f972da6699"
+      "size": 23298,
+      "sha256": "548761272e5764e4e08a4ca3416e9df227c3f57526fe5399888c8a01883fe9f7"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/procedural-juice-runtime.mjs",
@@ -1949,6 +2064,16 @@
       "sha256": "4ef0469453ef883257f9bd14336b8fbd109adb10af651b76a3a2eff6b41048c7"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/vanguard-protection-presentation.mjs",
+      "size": 8233,
+      "sha256": "115c722f1f3d9d48ee20e8b5943836de25ca7335b9502a37eaa778ae9a500ef1"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/weather-presentation.mjs",
+      "size": 4998,
+      "sha256": "462ad96a1a77273b268cefb176193f317716f933e4a3e87048f242ad94dddd7e"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/renderer/vendor/phaser.min.js",
       "size": 1181917,
       "sha256": "62081f6a1b51d040473f919ffedef9009953c20833518e146da5a8d1c9405ea8"
@@ -1961,7 +2086,7 @@
     {
       "path": "README.md",
       "size": 2240,
-      "sha256": "7f73e1f1f44c0aa37e7cb046f73d4b1e67f3cc7d3b6562d57652cb7014842d22"
+      "sha256": "f63485ebed062c5f080ad31899142f6bb7374d67b1c449daebe60efed90fa79b"
     },
     {
       "path": "scripts/verify-release.mjs",

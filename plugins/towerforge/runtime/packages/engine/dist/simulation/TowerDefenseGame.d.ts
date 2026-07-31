@@ -1,9 +1,11 @@
 import { type GameContentRegistry } from "../content/registry.js";
+import { type VanguardProtectionRuntimeStatsV1 } from "../content/enemy-behaviors-mechanics.js";
 import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
+import { type FormationSteeringRuntimeStatsV1 } from "./formation-steering.js";
 import { type NavigationAnalysisRequestV1, type NavigationAnalysisV1 } from "./navigation-analysis.js";
-import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from "./line-of-sight.js";
+import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1, type LineOfSightAnalysisV2 } from "./line-of-sight.js";
 import { type GameCheckpointV1 } from "./checkpoint.js";
 import { type GameSeed } from "./rng.js";
 import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, TowerType, WaveState } from "./types.js";
@@ -78,8 +80,14 @@ export declare class TowerDefenseGame {
     private readonly activeNavigationProfileId;
     private readonly activeElevation;
     private readonly activeLineOfSightProfile;
+    private hasAuthoredDynamicLineOfSightCapability;
+    private dynamicLineOfSightIndex;
     private readonly activeHighGroundProfile;
     private readonly activePhysicsMechanics;
+    private readonly activeBallisticsMechanics;
+    private readonly activeWeatherMechanics;
+    private weatherSchedule;
+    private weatherRuntime;
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
     private readonly activeHeroesMechanics;
@@ -89,6 +97,13 @@ export declare class TowerDefenseGame {
     private readonly activeLogisticsSchemaVersion;
     private readonly activeDirectorMechanics;
     private readonly activeQuestMechanics;
+    private readonly activeEnemyBehaviors;
+    private readonly activeFormationAssignments;
+    private formationSteeringStats;
+    private vanguardProtectionIndex;
+    private vanguardProtectionTransactionsThisTick;
+    private vanguardProtectionCandidatesInspected;
+    private vanguardProtectionMaximumCandidateCount;
     private questEntries;
     private readonly scriptedTargetingByTowerType;
     private directorDecisions;
@@ -135,6 +150,15 @@ export declare class TowerDefenseGame {
     private towerShields;
     private enemyMarks;
     private enemyExposures;
+    private enemyComponentStates;
+    private projectiles;
+    private nextProjectileSequence;
+    private projectileClearanceInspectionsThisTick;
+    private projectileDestructibleInspectionsThisTick;
+    private projectileRicochetInspectionsThisTick;
+    private projectileRicochetsThisTick;
+    private destructibleObjects;
+    private destructibleCollisionIndex;
     private enemyCounter;
     private towerCounter;
     private clearedWaveCount;
@@ -196,6 +220,13 @@ export declare class TowerDefenseGame {
     private failPreserveShieldQuests;
     private advancePreserveShieldQuests;
     private buildQuestSnapshot;
+    private weatherZoneContains;
+    private activeWeatherEffects;
+    private weatherMultiplierAt;
+    private publishWeatherTransitions;
+    private startWeatherWave;
+    private advanceWeather;
+    private endWeatherWave;
     startNextWave(): ActionResult;
     canPlaceTower(typeId: string, coord: HexCoord): ActionResult;
     canPlaceTowerAnywhere(typeId: string): ActionResult;
@@ -257,8 +288,8 @@ export declare class TowerDefenseGame {
         nodeId: string;
         missionId: string;
     }> | undefined;
-    /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
-    analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | undefined;
+    /** Pure, bounded diagnostics for active opt-in elevation and live destructible line of sight. */
+    analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | LineOfSightAnalysisV2 | undefined;
     /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */
     analyzeNavigation(request: NavigationAnalysisRequestV1): NavigationAnalysisV1 | undefined;
     createCheckpoint(): GameCheckpointV1;
@@ -286,6 +317,16 @@ export declare class TowerDefenseGame {
     private checkpointIdentity;
     private buildCombatState;
     private buildReactionState;
+    private buildEnemyBehaviorsState;
+    private buildEnemyBehaviorsCheckpointState;
+    private projectileAltitude;
+    private initializeDestructibleObjects;
+    private rebuildDestructibleCollisionIndex;
+    private buildDestructibleState;
+    private buildBallisticsState;
+    private buildBallisticsCheckpointState;
+    getFormationSteeringStats(): FormationSteeringRuntimeStatsV1;
+    getVanguardProtectionStats(): VanguardProtectionRuntimeStatsV1;
     private consumeNavigationAnalysisField;
     private buildNavigationAnalysisFields;
     private navigationDiagnosticPairs;
@@ -314,6 +355,7 @@ export declare class TowerDefenseGame {
     private scriptContexts;
     private scriptStateFor;
     private scriptExpressionContext;
+    private scriptMachineComponentContext;
     private applyScriptAction;
     private applyActiveLegacyTerrainAction;
     private resolveScriptTileTarget;
@@ -367,6 +409,9 @@ export declare class TowerDefenseGame {
     private buildSpawnQueue;
     private spawnDueEnemies;
     private createEnemyState;
+    private initializeEnemyComponents;
+    private enemyAbilityEnabled;
+    private towerComponentTargetId;
     private initializeEnemyShield;
     private initializeTowerShield;
     private runtimeMarkApplicationCount;
@@ -384,6 +429,10 @@ export declare class TowerDefenseGame {
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private buildFormationTickIndex;
+    private collectFormationNeighbors;
+    private navigationDestinationCost;
+    private selectFormationNextCoord;
     private heroBlockingActive;
     private heroBlockingCandidate;
     private deriveHeroBlockedEnemyIds;
@@ -420,6 +469,17 @@ export declare class TowerDefenseGame {
     private rebuildRogueliteSynergies;
     private currentRogueliteSnapshot;
     private artifactManagementSnapshot;
+    private ballisticsBinding;
+    private prepareTowerProjectile;
+    private commitTowerProjectile;
+    private compareRicochetEnemyIds;
+    private buildRicochetEnemyBuckets;
+    private ricochetIncomingCoord;
+    private reflectProjectile;
+    private persistentOverridesForCandidateTerrain;
+    private prepareDestructibleTerrainTransition;
+    private applyDestructibleProjectileImpact;
+    private updateProjectiles;
     private updateTowers;
     private updateSingleTower;
     /**
@@ -446,6 +506,7 @@ export declare class TowerDefenseGame {
     private legacyOrderTowerTargetCandidates;
     private orderTowerTargetCandidates;
     private towerHasLineOfSight;
+    private lineOfSightLegacyPolicy;
     private compareTargets;
     private compareDynamicTargets;
     private dynamicEnemyRemainingCost;
@@ -464,6 +525,10 @@ export declare class TowerDefenseGame {
     private enemyTerrainSpeedFactor;
     private enemyStatusSpeedFactor;
     private isEnemyInSunlight;
+    private buildVanguardProtectionIndex;
+    private collectVanguardProtectionCandidates;
+    private planVanguardDamageInterception;
+    private enemyDamageResolutionContext;
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;
@@ -473,6 +538,7 @@ export declare class TowerDefenseGame {
     private applyEnemyExposure;
     private updateEnemyExposures;
     private applyTowerDamage;
+    private buildTowerDamagePacket;
     private applyResolvedTowerDamage;
     private draftDamageModifiersForTower;
     /** The (author-defined) damage type a tower deals; defaults to "physical". */

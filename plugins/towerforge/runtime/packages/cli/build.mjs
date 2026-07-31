@@ -729,7 +729,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -833,6 +833,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -846,7 +847,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({
@@ -1996,9 +1998,18 @@ import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer,
   projectCampaignPresentation,
+  projectBallisticsEventPresentation,
+  projectBallisticsPresentation,
+  projectBallisticsPresentationPoint,
+  projectBallisticsRicochetEventPresentation,
   projectDirectorDecisionCues,
+  projectDestructibleEnvironmentPresentation,
+  projectWeatherPresentation,
   projectElevationCues,
   projectEnemyNavigationPoint,
+  projectEnemyComponentsPresentation,
+  projectEnemyFormationsPresentation,
+  projectVanguardProtectionPresentation,
   projectLegacyPresentationEvents,
   projectExposurePresentationCues,
   projectMarkPresentationCues,
@@ -2725,6 +2736,38 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.fxG.clear();
+    const ballisticsPresentation = projectBallisticsPresentation(presentationSnapshot);
+    if (ballisticsPresentation.active) {
+      this.fxG.fillStyle(0xffd27a, 1);
+      this.fxG.lineStyle(Math.max(1, g.r * 0.08), 0xfff4c4, 0.72);
+      for (const projectile of ballisticsPresentation.projectiles) {
+        const point = projectBallisticsPresentationPoint(
+          projectile,
+          (coord) => this.center(coord, g),
+          Math.max(1, g.r * 0.18)
+        );
+        if (!point) continue;
+        this.fxG.fillCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+        this.fxG.strokeCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+      }
+    }
+    const ballisticsEvents = projectBallisticsEventPresentation(presentationSnapshot);
+    for (const event of ballisticsEvents) {
+      const point = this.center(event.blockerCoord, g);
+      const radius = Math.max(3, g.r * 0.32);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.11), 0xff8b5c, 0.95);
+      this.fxG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
+      this.fxG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
+    }
+    const ballisticsRicochetEvents = projectBallisticsRicochetEventPresentation(presentationSnapshot);
+    for (const event of ballisticsRicochetEvents) {
+      const collision = this.center(event.collisionCoord, g);
+      const target = this.center(event.nextTargetCoord, g);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.1), 0x76e6ff, 0.95);
+      this.fxG.lineBetween(collision.x, collision.y, target.x, target.y);
+      this.fxG.fillStyle(0xd6f9ff, 1);
+      this.fxG.fillCircle(collision.x, collision.y, Math.max(2, g.r * 0.12));
+    }
     const presentationEvents = projectLegacyPresentationEvents(presentationSnapshot);
     const placedTowerPositions = new Map();
     for (const ev of presentationEvents) {
@@ -2825,6 +2868,43 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.entG.clear();
+    const weatherPresentation = projectWeatherPresentation(snap);
+    if (weatherPresentation.active) {
+      const weatherTiles = weatherPresentation.zoneKind === "all_map" ? (snap.tiles ?? []) : weatherPresentation.tiles;
+      for (const tile of weatherTiles) {
+        const p = this.center(tile, g);
+        this.entG.fillStyle(0x6ca1be, 0.14);
+        if (g.grid.kind === "square") {
+          const size = g.r * 1.52;
+          this.entG.fillRect(p.x - size / 2, p.y - size / 2, size, size);
+        } else {
+          this.entG.fillCircle(p.x, p.y, g.r * 0.76);
+        }
+      }
+    }
+    const destructibleEnvironmentPresentation = projectDestructibleEnvironmentPresentation(snap);
+    if (destructibleEnvironmentPresentation.active) {
+      for (const row of destructibleEnvironmentPresentation.rows) {
+        const p = this.center(row.coord, g);
+        const radius = Math.max(3, g.r * 0.38);
+        const alpha = row.destroyed ? 0.42 : 0.95;
+        this.entG.fillStyle(row.destroyed ? 0x605d55 : 0x9b7653, alpha);
+        this.entG.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+        this.entG.lineStyle(Math.max(1, g.r * 0.08), row.destroyed ? 0xa5a095 : 0xf0d3a8, alpha);
+        this.entG.strokeRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+        if (row.destroyed) {
+          this.entG.lineBetween(p.x - radius, p.y - radius, p.x + radius, p.y + radius);
+          this.entG.lineBetween(p.x + radius, p.y - radius, p.x - radius, p.y + radius);
+        } else if (row.hpRatio < 1) {
+          const barHeight = Math.max(2, g.r * 0.08);
+          const top = p.y + radius + barHeight;
+          this.entG.fillStyle(0x1b1d18, 1);
+          this.entG.fillRect(p.x - radius, top, radius * 2, barHeight);
+          this.entG.fillStyle(row.hpRatio > 0.35 ? 0xd7b06f : 0xdf6a59, 1);
+          this.entG.fillRect(p.x - radius, top, radius * 2 * row.hpRatio, barHeight);
+        }
+      }
+    }
     const seen = new Set();
     for (const tw of snap.towers) {
       const p = this.center(tw.coord, g); seen.add(tw.id);
@@ -2921,6 +3001,20 @@ class PlayScene extends Phaser.Scene {
 
     const seenMarkLabels = new Set();
     const seenExposureLabels = new Set();
+    const componentRowsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snap).rows) {
+      const existing = componentRowsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else componentRowsByEnemyId.set(row.enemyId, [row]);
+    }
+    const enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snap).rows.map((row) => [row.enemyId, row])
+    );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snap).cues;
+    const vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
@@ -2931,6 +3025,27 @@ class PlayScene extends Phaser.Scene {
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
       this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const formation = enemyFormationsByEnemyId.get(en.id);
+      if (formation) {
+        const formationColor = formation.role === "vanguard" ? 0xf0b45b
+          : formation.role === "support" ? 0x73bfe8 : 0xa79bdc;
+        this.entG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.46);
+      }
+      if (vanguardProtectionCueEnemyIds.has(en.id)) {
+        this.entG.lineStyle(Math.max(1, g.r * 0.09), 0xf7d774, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.58);
+      }
+      const components = componentRowsByEnemyId.get(en.id) ?? [];
+      if (components.length > 0) {
+        const width = g.r * 0.9, cellWidth = width / components.length;
+        for (let index = 0; index < components.length; index += 1) {
+          const row = components[index], x = p.x - width / 2 + index * cellWidth, y = p.y + g.r * 0.48;
+          this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+          this.entG.fillStyle(row.destroyed ? 0xdf6a59 : 0x8ac783, 1);
+          this.entG.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+        }
+      }
       const exposurePresentation = resolveExposurePresentation(snap, en.id);
       const exposureBadges = exposurePresentation.entries.map((entry) => ({ key: entry.exposureId, label: String(entry.stacks) }));
       if (exposurePresentation.overflowCount > 0) exposureBadges.push({ key: "overflow", label: "+" + exposurePresentation.overflowCount });
@@ -3091,6 +3206,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -3104,7 +3220,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({

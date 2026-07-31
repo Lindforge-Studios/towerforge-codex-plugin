@@ -4,12 +4,15 @@ import { resolveActiveReactionsMechanics } from "../content/reaction-mechanics.j
 import { NAVIGATION_LIMITS, resolveActiveNavigationMechanics } from "../content/navigation-mechanics.js";
 import { LINE_OF_SIGHT_LIMITS, resolveActiveElevationMechanics, resolveActiveHighGroundMechanics, resolveActiveLineOfSightMechanics } from "../content/elevation-mechanics.js";
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "../content/physics-mechanics.js";
+import { ARC_CLEARANCE_LIMITS, BALLISTICS_LIMITS, RICOCHET_LIMITS, resolveActiveBallisticsMechanics } from "../content/ballistics-mechanics.js";
+import { WEATHER_LIMITS, advanceWeatherRuntimeV1, createWeatherRuntimeV1, createWeatherScheduleV1, resolveActiveWeatherMechanics, weatherPeriodicDueOrdinalV1 } from "../content/weather-mechanics.js";
 import { TERRAFORMING_LIMITS, resolveActiveTerraformingMechanics } from "../content/terraforming-mechanics.js";
 import { ROGUELITE_ARTIFACT_INVENTORY_LIMIT, ROGUELITE_DAMAGE_MODIFIER_RESERVE, ROGUELITE_DRAFT_LIMITS, deriveRogueliteSynergyStateV1, rogueliteSynergyWorstCaseModifierCount, resolveActiveRogueliteMechanics } from "../content/roguelite-mechanics.js";
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, heroSkillModifierIdV5, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
 import { LOGISTICS_AMMUNITION_LIMITS, LOGISTICS_SUPPLY_LIMITS, resolveActiveLogisticsMechanics } from "../content/logistics-mechanics.js";
 import { DIRECTOR_LIMITS, resolveActiveDirectorMechanics } from "../content/director-mechanics.js";
 import { resolveActiveQuestMechanics, selectProceduralQuestsV1 } from "../content/quest-mechanics.js";
+import { ENEMY_BEHAVIORS_LIMITS, resolveActiveEnemyBehaviorsV1 } from "../content/enemy-behaviors-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -23,16 +26,22 @@ import { computeHighGroundPairModifiers } from "./high-ground.js";
 import { NavigationResolver } from "./navigation-runtime.js";
 import { NavigationFieldLookupCache } from "./navigation-movement.js";
 import { buildNavigationField } from "./navigation-field.js";
+import { selectFormationSteeringNextV1 } from "./formation-steering.js";
 import { planDynamicTerraformingNavigation } from "./terraforming-navigation.js";
 import { collectDynamicTerraformingSpawnProvenance } from "./navigation-reachability.js";
 import { DynamicTerraformingSafetyBudgetError } from "./terraforming-navigation-budget.js";
 import { prepareDynamicTerraformingSafetySet } from "./terraforming-navigation-safety.js";
 import { advanceTerraformExpiryGroups, buildTerraformingSnapshot, countTerraformExpiryOwnership, terraformExpiryTargetKey } from "./terraforming-expiry.js";
 import { normalizeNavigationAnalysisRequestV1 } from "./navigation-analysis.js";
-import { analyzeLineOfSightTargets, normalizeLineOfSightAnalysisRequestV1, traceLineOfSight } from "./line-of-sight.js";
-import { DamageResolver } from "./damage.js";
+import { analyzeLineOfSightTargets, analyzeLineOfSightTargetsV2, normalizeLineOfSightAnalysisRequestV1, traceLineOfSight, traceLineOfSightV2 } from "./line-of-sight.js";
+import { buildDynamicAuthoredLineOfSightIndexV1 } from "./destructible-line-of-sight.js";
+import { DamageResolver, validateDamagePacket } from "./damage.js";
 import { MAX_MODIFIERS_PER_RESOLUTION } from "./modifiers.js";
 import { GAME_CHECKPOINT_SCHEMA_VERSION, SIMULATION_ENGINE_VERSION, checkpointDataField, checkpointObjectDescriptors, cloneCheckpointJson, computeCheckpointStateDigest, inspectCheckpointEnvelope, requireExactCheckpointKeys } from "./checkpoint.js";
+import { projectileAltitudeAtProgress, traceProjectileClearanceV1 } from "./projectile-clearance.js";
+import { traceProjectileRicochetRayV1 } from "./projectile-ricochet.js";
+import { DESTRUCTIBLE_COLLISION_LIMITS, createDestructibleCollisionIndexV1, planDestructibleObjectDamageV1, traceProjectileDestructibleCollisionV1 } from "./projectile-destructible.js";
+import { PersistentTerrainTransactionError, adoptPersistentTerrainTransaction, preparePersistentTerrainTransaction } from "./persistent-terrain-transaction.js";
 import { SeededRng } from "./rng.js";
 import { planDirectorWaveV1 } from "./director.js";
 import { canonicalStringify, getSimulationContentDigest, stableDigest } from "./stable-digest.js";
@@ -202,7 +211,7 @@ function assertPinnedGridMapSurface(map) {
 }
 const SCRIPT_GAME_EVENT_NAMES = new Set([
     "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed", "towerTargetModeChanged",
-    "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
+    "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "bossComponentDamaged", "bossComponentDestroyed", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
     "enemyExposureChanged", "enemyReactionTriggered",
     "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
     "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat",
@@ -334,8 +343,14 @@ export class TowerDefenseGame {
     activeNavigationProfileId;
     activeElevation;
     activeLineOfSightProfile;
+    hasAuthoredDynamicLineOfSightCapability = false;
+    dynamicLineOfSightIndex = undefined;
     activeHighGroundProfile;
     activePhysicsMechanics;
+    activeBallisticsMechanics;
+    activeWeatherMechanics;
+    weatherSchedule;
+    weatherRuntime;
     activeTerraformingMechanics;
     activeRogueliteMechanics;
     activeHeroesMechanics;
@@ -345,6 +360,20 @@ export class TowerDefenseGame {
     activeLogisticsSchemaVersion;
     activeDirectorMechanics;
     activeQuestMechanics;
+    activeEnemyBehaviors;
+    activeFormationAssignments;
+    formationSteeringStats = {
+        bucketBuildCount: 0,
+        bucketEntryCount: 0,
+        fieldReadCount: 0,
+        plannerInvocationCount: 0,
+        neighborEntriesInspected: 0,
+        maximumNeighborCount: 0
+    };
+    vanguardProtectionIndex;
+    vanguardProtectionTransactionsThisTick = 0;
+    vanguardProtectionCandidatesInspected = 0;
+    vanguardProtectionMaximumCandidateCount = 0;
     questEntries = Object.freeze([]);
     scriptedTargetingByTowerType = new Map();
     directorDecisions = Object.freeze([]);
@@ -395,6 +424,15 @@ export class TowerDefenseGame {
     towerShields = {};
     enemyMarks = {};
     enemyExposures = emptyDataRecord();
+    enemyComponentStates = {};
+    projectiles = [];
+    nextProjectileSequence = 1;
+    projectileClearanceInspectionsThisTick = 0;
+    projectileDestructibleInspectionsThisTick = 0;
+    projectileRicochetInspectionsThisTick = 0;
+    projectileRicochetsThisTick = 0;
+    destructibleObjects = [];
+    destructibleCollisionIndex;
     enemyCounter = 0;
     towerCounter = 0;
     clearedWaveCount = 0;
@@ -477,11 +515,27 @@ export class TowerDefenseGame {
         this.activeLineOfSightProfile = resolveActiveLineOfSightMechanics(this.content, missionId);
         this.activeHighGroundProfile = resolveActiveHighGroundMechanics(this.content, missionId);
         this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
+        this.activeBallisticsMechanics = resolveActiveBallisticsMechanics(this.content, missionId);
+        this.activeWeatherMechanics = resolveActiveWeatherMechanics(this.content, missionId);
+        this.weatherSchedule = this.activeWeatherMechanics
+            ? createWeatherScheduleV1({
+                zones: this.activeWeatherMechanics.zones,
+                definitions: this.activeWeatherMechanics.definitions,
+                schedule: this.activeWeatherMechanics.schedule
+            }, {
+                seed: canonicalStringify(this.initialRngState),
+                missionId,
+                waveCount: this.mission.waves.length
+            })
+            : undefined;
+        this.weatherRuntime = this.weatherSchedule ? createWeatherRuntimeV1(this.weatherSchedule) : undefined;
         this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
+        this.initializeDestructibleObjects();
         this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
         this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
         this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
         this.activeQuestMechanics = resolveActiveQuestMechanics(this.content, missionId);
+        this.activeEnemyBehaviors = resolveActiveEnemyBehaviorsV1(this.content, missionId);
         this.initializeQuestEntries();
         const activeLogistics = resolveActiveLogisticsMechanics(this.content, missionId);
         this.activeLogisticsSchemaVersion = activeLogistics?.schemaVersion;
@@ -629,6 +683,17 @@ export class TowerDefenseGame {
             this.navigationFieldLookupCache = undefined;
             this.navigationEnemyFields = undefined;
         }
+        this.activeFormationAssignments = this.activeNavigationProfile && this.activeEnemyBehaviors?.formations
+            ? new Map(Object.entries(this.activeEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+                enemyTypeId,
+                Object.freeze({
+                    cohortId,
+                    role,
+                    steering: cohort.steering,
+                    ...(cohort.protection === undefined ? {} : { protection: cohort.protection })
+                })
+            ]))))
+            : undefined;
         this.difficulty = this.content.difficulties.find((item) => item.id === options.difficultyId)
             ?? this.content.difficulties.find((item) => item.id === this.content.defaultDifficultyId)
             ?? { id: "normal", label: "Normal" };
@@ -762,6 +827,19 @@ export class TowerDefenseGame {
         this.enemyShields = {};
         this.towerShields = {};
         this.enemyMarks = {};
+        this.enemyComponentStates = {};
+        this.projectiles = [];
+        this.weatherRuntime = this.weatherSchedule ? createWeatherRuntimeV1(this.weatherSchedule) : undefined;
+        this.nextProjectileSequence = 1;
+        this.projectileClearanceInspectionsThisTick = 0;
+        this.projectileDestructibleInspectionsThisTick = 0;
+        this.projectileRicochetInspectionsThisTick = 0;
+        this.projectileRicochetsThisTick = 0;
+        this.initializeDestructibleObjects();
+        this.vanguardProtectionIndex = undefined;
+        this.vanguardProtectionTransactionsThisTick = 0;
+        this.vanguardProtectionCandidatesInspected = 0;
+        this.vanguardProtectionMaximumCandidateCount = 0;
         this.directorDecisions = Object.freeze([]);
         this.initializeQuestEntries();
         this.lastEvents = [];
@@ -909,6 +987,136 @@ export class TowerDefenseGame {
             profileId: this.activeQuestMechanics.profileId,
             entries: Object.freeze(this.questEntries.map((entry) => Object.freeze({ ...entry })))
         });
+    }
+    weatherZoneContains(zone, coord) {
+        return zone.kind === "all_map" || zone.tiles.some((tile) => tile.q === coord.q && tile.r === coord.r);
+    }
+    activeWeatherEffects() {
+        const active = this.weatherRuntime?.active;
+        const definition = active && this.activeWeatherMechanics?.definitions[active.weatherId];
+        return definition ? Object.entries(definition.effects) : [];
+    }
+    weatherMultiplierAt(kind, coord) {
+        const active = this.weatherRuntime?.active;
+        if (!active || !this.weatherZoneContains(active.zone, coord))
+            return 1;
+        let multiplier = 1;
+        for (const [, effect] of this.activeWeatherEffects()) {
+            if (effect.kind === kind && "multiplier" in effect)
+                multiplier *= effect.multiplier;
+        }
+        return multiplier;
+    }
+    publishWeatherTransitions(transitions) {
+        const profileId = this.activeWeatherMechanics?.profileId;
+        if (!profileId)
+            return;
+        for (const transition of transitions) {
+            if (transition.kind === "started") {
+                this.lastEvents.push({
+                    type: "weatherStarted", profileId,
+                    waveIndex: transition.waveIndex, choiceId: transition.choiceId,
+                    weatherId: transition.weatherId, zoneId: transition.zoneId
+                });
+            }
+            else {
+                this.lastEvents.push({
+                    type: "weatherEnded", profileId,
+                    waveIndex: transition.waveIndex, choiceId: transition.choiceId,
+                    weatherId: transition.weatherId, zoneId: transition.zoneId,
+                    reason: transition.reason ?? "wave_cleared"
+                });
+            }
+        }
+    }
+    startWeatherWave(waveIndex) {
+        if (!this.activeWeatherMechanics || !this.weatherSchedule || !this.weatherRuntime)
+            return;
+        const result = advanceWeatherRuntimeV1({ zones: this.activeWeatherMechanics.zones, definitions: this.activeWeatherMechanics.definitions,
+            schedule: this.activeWeatherMechanics.schedule }, this.weatherSchedule, this.weatherRuntime, { waveIndex, elapsedUnits: 0, waveActive: true });
+        this.weatherRuntime = result.runtime;
+        this.publishWeatherTransitions(result.transitions);
+    }
+    advanceWeather(delta) {
+        const activeProfile = this.activeWeatherMechanics;
+        const schedule = this.weatherSchedule;
+        const runtime = this.weatherRuntime;
+        if (!activeProfile || !schedule || !runtime || !runtime.active)
+            return;
+        const result = advanceWeatherRuntimeV1({
+            zones: activeProfile.zones, definitions: activeProfile.definitions, schedule: activeProfile.schedule
+        }, schedule, runtime, {
+            waveIndex: runtime.active.waveIndex,
+            elapsedUnits: runtime.active.elapsedUnits + delta,
+            waveActive: true
+        });
+        this.weatherRuntime = result.runtime;
+        this.publishWeatherTransitions(result.transitions);
+        let inspected = 0;
+        let applications = 0;
+        for (const due of result.dueEffects) {
+            let affectedCount = 0;
+            const zone = activeProfile.zones[due.zoneId];
+            if (!zone)
+                continue;
+            for (const enemy of [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))) {
+                if (enemy.hp <= 0 || !this.weatherZoneContains(zone, this.enemyCoord(enemy)))
+                    continue;
+                inspected += 1;
+                if (inspected > WEATHER_LIMITS.targetInspectionsPerTick) {
+                    this.lastEvents.push({
+                        type: "weatherBudgetExceeded", profileId: activeProfile.profileId,
+                        waveIndex: due.waveIndex, limit: WEATHER_LIMITS.targetInspectionsPerTick
+                    });
+                    return;
+                }
+                if (applications >= WEATHER_LIMITS.applicationsPerTick) {
+                    this.lastEvents.push({
+                        type: "weatherBudgetExceeded", profileId: activeProfile.profileId,
+                        waveIndex: due.waveIndex, limit: WEATHER_LIMITS.applicationsPerTick
+                    });
+                    return;
+                }
+                if (due.effect.kind === "periodic_damage") {
+                    this.applyResolvedEnemyDamage(enemy, due.effect.amount, {
+                        kind: "weather", profileId: activeProfile.profileId, weatherId: due.weatherId,
+                        zoneId: due.zoneId, effectId: due.effectId
+                    }, {
+                        ...(due.effect.damageType === undefined ? {} : { damageType: due.effect.damageType }),
+                        tags: ["area", "over_time"]
+                    });
+                }
+                else {
+                    this.applyStatusEffect(enemy, due.effect.status);
+                }
+                applications += 1;
+                affectedCount += 1;
+            }
+            this.lastEvents.push({
+                type: "weatherEffectApplied", profileId: activeProfile.profileId,
+                waveIndex: due.waveIndex, choiceId: due.choiceId, weatherId: due.weatherId,
+                zoneId: due.zoneId, effectId: due.effectId, kind: due.effect.kind,
+                applicationOrdinal: due.applicationOrdinal, affectedCount
+            });
+        }
+    }
+    endWeatherWave(reason = "wave_cleared") {
+        const activeProfile = this.activeWeatherMechanics;
+        const schedule = this.weatherSchedule;
+        const runtime = this.weatherRuntime;
+        if (!activeProfile || !schedule || !runtime?.active)
+            return;
+        const result = advanceWeatherRuntimeV1({
+            zones: activeProfile.zones, definitions: activeProfile.definitions, schedule: activeProfile.schedule
+        }, schedule, runtime, {
+            waveIndex: runtime.active.waveIndex,
+            elapsedUnits: runtime.active.elapsedUnits,
+            waveActive: false
+        });
+        this.weatherRuntime = result.runtime;
+        this.publishWeatherTransitions(result.transitions.map((entry) => entry.kind === "ended"
+            ? Object.freeze({ ...entry, reason })
+            : entry));
     }
     startNextWave() {
         if (this.outcome !== "playing") {
@@ -1902,6 +2110,12 @@ export class TowerDefenseGame {
     }
     tick(deltaUnits) {
         this.lastEvents = [];
+        this.vanguardProtectionTransactionsThisTick = 0;
+        this.projectileClearanceInspectionsThisTick = 0;
+        this.projectileDestructibleInspectionsThisTick = 0;
+        this.projectileRicochetInspectionsThisTick = 0;
+        this.projectileRicochetsThisTick = 0;
+        this.vanguardProtectionIndex = undefined;
         if (this.activePhysicsMechanics)
             this.displacementStepAttemptsThisTick = 0;
         this.scriptEventCursor = 0;
@@ -1926,10 +2140,13 @@ export class TowerDefenseGame {
             this.syncPrepRemaining();
         }
         this.updateShieldRegeneration(delta);
+        this.advanceWeather(delta);
         this.updateEnemyMarks(delta);
         this.updateEnemyExposures(delta);
         this.updateEnemyStatuses(delta);
         this.moveEnemies(delta);
+        this.updateProjectiles(delta);
+        this.vanguardProtectionIndex = undefined;
         this.applySunlightRegeneration(delta);
         this.applyHealAuras(delta);
         this.applyDotDamage(delta);
@@ -1987,12 +2204,20 @@ export class TowerDefenseGame {
             missionId: this.mission.id
         });
     }
-    /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
+    /** Pure, bounded diagnostics for active opt-in elevation and live destructible line of sight. */
     analyzeLineOfSight(request) {
         const profile = this.activeLineOfSightProfile;
-        if (!profile)
+        const dynamicIndex = this.dynamicLineOfSightIndex;
+        if (!profile && !dynamicIndex)
             return undefined;
-        return analyzeLineOfSightTargets(this.map, this.content.terrainTypes, profile, normalizeLineOfSightAnalysisRequestV1(request, this.map));
+        const normalized = normalizeLineOfSightAnalysisRequestV1(request, this.map);
+        if (dynamicIndex) {
+            return analyzeLineOfSightTargetsV2(this.map, profile === undefined ? undefined : this.lineOfSightLegacyPolicy(profile), dynamicIndex, {
+                ...(profile === undefined ? {} : { elevation: profile.profileId }),
+                ballistics: this.activeBallisticsMechanics.profileId
+            }, normalized);
+        }
+        return analyzeLineOfSightTargets(this.map, this.content.terrainTypes, profile, normalized);
     }
     /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */
     analyzeNavigation(request) {
@@ -2819,6 +3044,230 @@ export class TowerDefenseGame {
             return undefined;
         return { schemaVersion: 1, exposures: { enemies } };
     }
+    buildEnemyBehaviorsState() {
+        if (!this.activeEnemyBehaviors)
+            return undefined;
+        const formationEnemies = this.activeFormationAssignments === undefined
+            ? undefined
+            : Object.fromEntries(this.enemies
+                .filter((enemy) => enemy.hp > 0 && this.activeFormationAssignments.has(enemy.typeId))
+                .sort((left, right) => compareBinary(left.id, right.id))
+                .map((enemy) => {
+                const assignment = this.activeFormationAssignments.get(enemy.typeId);
+                return [enemy.id, { cohortId: assignment.cohortId, role: assignment.role }];
+            }));
+        const protectionCohorts = this.activeFormationAssignments === undefined
+            ? undefined
+            : Object.fromEntries(Object.entries(this.activeEnemyBehaviors.formations?.cohorts ?? {})
+                .filter(([, cohort]) => cohort.protection !== undefined)
+                .sort(([left], [right]) => compareBinary(left, right))
+                .map(([cohortId, cohort]) => [cohortId, {
+                    radius: cohort.protection.radius,
+                    sourceKinds: [...cohort.protection.sourceKinds]
+                }]));
+        return {
+            schemaVersion: 1,
+            components: Object.fromEntries(Object.keys(this.enemyComponentStates).sort(compareBinary).map((enemyId) => [
+                enemyId,
+                Object.fromEntries(Object.keys(this.enemyComponentStates[enemyId] ?? {}).sort(compareBinary).map((componentId) => {
+                    const state = this.enemyComponentStates[enemyId][componentId];
+                    return [componentId, {
+                            hp: state.hp,
+                            maxHp: state.maxHp,
+                            ...(state.shield === undefined ? {} : { shield: { ...state.shield } })
+                        }];
+                }))
+            ])),
+            ...(formationEnemies === undefined ? {} : {
+                formations: {
+                    schemaVersion: 1,
+                    enemies: formationEnemies,
+                    ...(protectionCohorts === undefined || Object.keys(protectionCohorts).length === 0 ? {} : {
+                        protection: { schemaVersion: 1, cohorts: protectionCohorts }
+                    })
+                }
+            })
+        };
+    }
+    buildEnemyBehaviorsCheckpointState() {
+        const state = this.buildEnemyBehaviorsState();
+        if (state === undefined)
+            return undefined;
+        const hasProtection = Object.values(this.activeEnemyBehaviors?.formations?.cohorts ?? {})
+            .some((cohort) => cohort.protection !== undefined);
+        return {
+            ...state,
+            ...(hasProtection ? {
+                protectionRuntime: {
+                    schemaVersion: 1,
+                    transactionsThisTick: this.vanguardProtectionTransactionsThisTick
+                }
+            } : {})
+        };
+    }
+    projectileAltitude(projectile) {
+        const progress = Math.max(0, Math.min(1, projectile.elapsedUnits / projectile.travelTimeUnits));
+        return projectileAltitudeAtProgress(projectile.sourceElevation, projectile.impact.targetElevation, projectile.trajectory, projectile.maxAltitude, progress);
+    }
+    initializeDestructibleObjects() {
+        const definitions = this.activeBallisticsMechanics?.projectiles.destructibles?.definitions;
+        if (!definitions) {
+            this.destructibleObjects = [];
+            this.destructibleCollisionIndex = undefined;
+            this.hasAuthoredDynamicLineOfSightCapability = false;
+            this.dynamicLineOfSightIndex = undefined;
+            return;
+        }
+        this.destructibleObjects = this.map.getDestructibleObjects()
+            .map((placement) => {
+            const definition = definitions[placement.definitionId];
+            if (!definition)
+                throw new Error(`Active destructible object "${placement.id}" has no authored definition.`);
+            return {
+                objectId: placement.id,
+                definitionId: placement.definitionId,
+                coord: { ...placement.coord },
+                hp: definition.maxHp,
+                maxHp: definition.maxHp,
+                destroyed: false
+            };
+        })
+            .sort((left, right) => compareBinary(left.objectId, right.objectId));
+        this.rebuildDestructibleCollisionIndex();
+    }
+    rebuildDestructibleCollisionIndex() {
+        const definitions = this.activeBallisticsMechanics?.projectiles.destructibles?.definitions;
+        if (!definitions) {
+            this.destructibleCollisionIndex = undefined;
+            this.hasAuthoredDynamicLineOfSightCapability = false;
+            this.dynamicLineOfSightIndex = undefined;
+            return;
+        }
+        this.hasAuthoredDynamicLineOfSightCapability = this.destructibleObjects.some((object) => definitions[object.definitionId].hitRegion.blocksLineOfSight);
+        const liveObjects = this.destructibleObjects.filter((object) => !object.destroyed);
+        this.destructibleCollisionIndex = createDestructibleCollisionIndexV1(this.map, liveObjects.map((object) => ({
+            objectId: object.objectId,
+            definitionId: object.definitionId,
+            coord: { ...object.coord },
+            blockerHeight: definitions[object.definitionId].hitRegion.blockerHeight
+        })));
+        const lineOfSightBlockers = liveObjects
+            .filter((object) => definitions[object.definitionId].hitRegion.blocksLineOfSight)
+            .map((object) => ({
+            objectId: object.objectId,
+            definitionId: object.definitionId,
+            coord: { ...object.coord },
+            blockerHeight: definitions[object.definitionId].hitRegion.blockerHeight
+        }));
+        this.dynamicLineOfSightIndex = this.hasAuthoredDynamicLineOfSightCapability
+            ? buildDynamicAuthoredLineOfSightIndexV1(this.map, lineOfSightBlockers)
+            : undefined;
+    }
+    buildDestructibleState() {
+        if (!this.activeBallisticsMechanics?.projectiles.destructibles)
+            return undefined;
+        return {
+            schemaVersion: 1,
+            objects: this.destructibleObjects.map((object) => ({
+                objectId: object.objectId,
+                definitionId: object.definitionId,
+                coord: { ...object.coord },
+                hp: object.hp,
+                maxHp: object.maxHp,
+                destroyed: object.destroyed
+            }))
+        };
+    }
+    buildBallisticsState() {
+        if (!this.activeBallisticsMechanics)
+            return undefined;
+        const destructibles = this.buildDestructibleState();
+        const projectiles = this.projectiles
+            .slice()
+            .sort((left, right) => compareBinary(left.id, right.id))
+            .map((projectile) => ({
+            id: projectile.id,
+            sourceCoord: { ...projectile.sourceCoord },
+            targetCoord: { ...projectile.impact.targetCoord },
+            trajectory: projectile.trajectory,
+            elapsedUnits: projectile.elapsedUnits,
+            travelTimeUnits: projectile.travelTimeUnits,
+            altitude: this.projectileAltitude(projectile),
+            ...(projectile.maxAltitude === undefined ? {} : { maxAltitude: projectile.maxAltitude })
+        }));
+        return destructibles === undefined
+            ? { schemaVersion: 1, projectiles }
+            : { schemaVersion: 2, projectiles, destructibles };
+    }
+    buildBallisticsCheckpointState() {
+        if (!this.activeBallisticsMechanics)
+            return undefined;
+        const destructibles = this.buildDestructibleState();
+        const schemaVersion = destructibles !== undefined
+            ? 4
+            : this.activeBallisticsMechanics.projectiles.ricochet !== undefined
+                ? 3
+                : this.activeBallisticsMechanics.projectiles.clearance === undefined ? 1 : 2;
+        const projectiles = this.projectiles
+            .slice()
+            .sort((left, right) => compareBinary(left.id, right.id))
+            .map((projectile) => ({
+            ...projectile,
+            sourceCoord: { ...projectile.sourceCoord },
+            ...("clearanceCollision" in projectile && projectile.clearanceCollision !== undefined ? {
+                clearanceCollision: {
+                    ...projectile.clearanceCollision,
+                    blockerCoord: { ...projectile.clearanceCollision.blockerCoord }
+                }
+            } : {}),
+            ...("ricochet" in projectile && projectile.ricochet !== undefined ? {
+                ricochet: {
+                    ...projectile.ricochet,
+                    ...(projectile.ricochet.lastCollision === undefined ? {} : {
+                        lastCollision: {
+                            ...projectile.ricochet.lastCollision,
+                            collisionCoord: { ...projectile.ricochet.lastCollision.collisionCoord },
+                            incomingFromCoord: { ...projectile.ricochet.lastCollision.incomingFromCoord }
+                        }
+                    })
+                }
+            } : {}),
+            ...("destructibleCollision" in projectile && projectile.destructibleCollision !== undefined ? {
+                destructibleCollision: {
+                    ...projectile.destructibleCollision,
+                    collisionCoord: { ...projectile.destructibleCollision.collisionCoord }
+                }
+            } : {}),
+            impact: {
+                targetCoord: { ...projectile.impact.targetCoord },
+                targetElevation: projectile.impact.targetElevation,
+                damagePacket: cloneCheckpointJson(projectile.impact.damagePacket)
+            }
+        }));
+        if (destructibles !== undefined) {
+            return {
+                schemaVersion: 4,
+                nextProjectileSequence: this.nextProjectileSequence,
+                projectiles: projectiles,
+                destructibles
+            };
+        }
+        return {
+            schemaVersion,
+            nextProjectileSequence: this.nextProjectileSequence,
+            projectiles
+        };
+    }
+    getFormationSteeringStats() {
+        return Object.freeze({ ...this.formationSteeringStats });
+    }
+    getVanguardProtectionStats() {
+        return Object.freeze({
+            transactionsThisTick: this.vanguardProtectionTransactionsThisTick,
+            candidatesInspected: this.vanguardProtectionCandidatesInspected,
+            maximumCandidateCount: this.vanguardProtectionMaximumCandidateCount
+        });
+    }
     consumeNavigationAnalysisField(field, budget) {
         if (budget.fields.has(field))
             return;
@@ -3056,6 +3505,17 @@ export class TowerDefenseGame {
         }));
         const combat = this.buildCombatState();
         const reactions = this.buildReactionState();
+        const enemyBehaviors = this.buildEnemyBehaviorsCheckpointState();
+        const ballistics = this.buildBallisticsCheckpointState();
+        const weather = this.activeWeatherMechanics && this.weatherSchedule && this.weatherRuntime
+            ? {
+                schemaVersion: 1,
+                profileId: this.activeWeatherMechanics.profileId,
+                rng: this.weatherSchedule.rng,
+                active: this.weatherRuntime.active,
+                periodicOrdinals: this.weatherRuntime.periodicOrdinals
+            }
+            : undefined;
         const artifacts = this.buildArtifactCheckpointState();
         const draft = this.buildDraftCheckpointState();
         const heroes = this.heroStateV2 === undefined
@@ -3294,6 +3754,9 @@ export class TowerDefenseGame {
             ...(logistics === undefined ? {} : { logistics }),
             ...(director === undefined ? {} : { director }),
             ...(quests === undefined ? {} : { quests }),
+            ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
+            ...(ballistics === undefined ? {} : { ballistics }),
+            ...(weather === undefined ? {} : { weather }),
             ...(this.campaignBattle === undefined ? {} : {
                 campaignBattle: {
                     schemaVersion: 1,
@@ -3351,6 +3814,9 @@ export class TowerDefenseGame {
         const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
         const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
         const checkpointQuests = resolveActiveQuestMechanics(content, identity.missionId);
+        const checkpointEnemyBehaviors = resolveActiveEnemyBehaviorsV1(content, identity.missionId);
+        const checkpointBallistics = resolveActiveBallisticsMechanics(content, identity.missionId);
+        const checkpointWeather = resolveActiveWeatherMechanics(content, identity.missionId);
         const checkpointStateMachines = Object.values(content.scripts ?? {})
             .filter((script) => Boolean(script && script.enabled !== false && script.schemaVersion === 7 && script.stateMachines?.length))
             .sort((left, right) => compareBinary(left.id, right.id));
@@ -3441,6 +3907,33 @@ export class TowerDefenseGame {
         }
         if (hasQuestCheckpoint)
             checkpointDataField(descriptors, "quests", "Game checkpoint state");
+        const hasEnemyBehaviorsCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "enemyBehaviors");
+        if (checkpointEnemyBehaviors && !hasEnemyBehaviorsCheckpoint) {
+            throw new Error("Game checkpoint enemyBehaviors state is required for an active capability.");
+        }
+        if (!checkpointEnemyBehaviors && hasEnemyBehaviorsCheckpoint) {
+            throw new Error("Game checkpoint enemyBehaviors state is unsupported for an inactive capability.");
+        }
+        if (hasEnemyBehaviorsCheckpoint)
+            checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state");
+        const hasBallisticsCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "ballistics");
+        if (checkpointBallistics && !hasBallisticsCheckpoint) {
+            throw new Error("Game checkpoint ballistics state is required for an active capability.");
+        }
+        if (!checkpointBallistics && hasBallisticsCheckpoint) {
+            throw new Error("Game checkpoint ballistics state is unsupported for an inactive capability.");
+        }
+        if (hasBallisticsCheckpoint)
+            checkpointDataField(descriptors, "ballistics", "Game checkpoint state");
+        const hasWeatherCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "weather");
+        if (checkpointWeather && !hasWeatherCheckpoint) {
+            throw new Error("Game checkpoint weather state is required for an active capability.");
+        }
+        if (!checkpointWeather && hasWeatherCheckpoint) {
+            throw new Error("Game checkpoint weather state is unsupported for an inactive capability.");
+        }
+        if (hasWeatherCheckpoint)
+            checkpointDataField(descriptors, "weather", "Game checkpoint state");
         const hasScriptMachinesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "scriptMachines");
         if (requiresScriptMachinesCheckpoint && !hasScriptMachinesCheckpoint) {
             throw new Error("Game checkpoint TowerScript machine state is required for active schema v7 machines.");
@@ -3462,6 +3955,9 @@ export class TowerDefenseGame {
             ...(hasLogisticsCheckpoint ? ["logistics"] : []),
             ...(hasDirectorCheckpoint ? ["director"] : []),
             ...(hasQuestCheckpoint ? ["quests"] : []),
+            ...(hasEnemyBehaviorsCheckpoint ? ["enemyBehaviors"] : []),
+            ...(hasBallisticsCheckpoint ? ["ballistics"] : []),
+            ...(hasWeatherCheckpoint ? ["weather"] : []),
             ...(hasScriptMachinesCheckpoint ? ["scriptMachines"] : [])
         ], "Game checkpoint state");
         const finite = (value, label, minimum = 0, maximum = Infinity) => {
@@ -3515,6 +4011,436 @@ export class TowerDefenseGame {
             }
             return result;
         };
+        const checkpointWaveIndex = integer(state.waveIndex, "waveIndex");
+        const checkpointWaveState = state.waveState;
+        if (!(new Set(["ready", "spawning", "between", "complete"])).has(checkpointWaveState)) {
+            throw new Error("Game checkpoint state waveState is invalid.");
+        }
+        if (checkpointWeather && state.weather) {
+            const expectedWeatherSchedule = createWeatherScheduleV1({
+                zones: checkpointWeather.zones,
+                definitions: checkpointWeather.definitions,
+                schedule: checkpointWeather.schedule
+            }, {
+                seed: canonicalStringify(rootInitialRng),
+                missionId: identity.missionId,
+                waveCount: mission.waves.length
+            });
+            const weather = closed(state.weather, "weather state", ["schemaVersion", "profileId", "rng", "active", "periodicOrdinals"]);
+            if (integer(checkpointDataField(weather, "schemaVersion", "weather state"), "weather schemaVersion", 1) !== 1) {
+                throw new Error("Game checkpoint weather schema version is unsupported.");
+            }
+            if (stringValue(checkpointDataField(weather, "profileId", "weather state"), "weather profileId") !== checkpointWeather.profileId) {
+                throw new Error("Game checkpoint weather profile provenance is invalid.");
+            }
+            const weatherRng = closed(checkpointDataField(weather, "rng", "weather state"), "weather rng", ["initial", "current"]);
+            const checkpointWeatherRng = {
+                initial: SeededRng.fromState(checkpointDataField(weatherRng, "initial", "weather rng")).exportState(),
+                current: SeededRng.fromState(checkpointDataField(weatherRng, "current", "weather rng")).exportState()
+            };
+            if (canonicalStringify(checkpointWeatherRng) !== canonicalStringify(expectedWeatherSchedule.rng)) {
+                throw new Error("Game checkpoint weather RNG provenance is invalid.");
+            }
+            const activeValue = checkpointDataField(weather, "active", "weather state");
+            const activeChoice = activeValue === null ? null : closed(activeValue, "weather active occurrence", ["waveIndex", "choiceId", "weatherId", "zoneId", "zone", "elapsedUnits"]);
+            const periodicOrdinals = checkpointDataField(weather, "periodicOrdinals", "weather state");
+            const allowedEffectIds = new Set(Object.values(checkpointWeather.definitions).flatMap((definition) => Object.keys(definition.effects)));
+            recordNumbers(periodicOrdinals, "weather periodicOrdinals", allowedEffectIds, true);
+            const expectedActiveOccurrence = checkpointWaveState === "spawning"
+                ? expectedWeatherSchedule.occurrences[checkpointWaveIndex] ?? null
+                : null;
+            if ((activeChoice === null) !== (expectedActiveOccurrence === null)) {
+                throw new Error("Game checkpoint weather active wave lifecycle provenance is invalid.");
+            }
+            if (activeChoice) {
+                const activeWaveIndex = integer(checkpointDataField(activeChoice, "waveIndex", "weather active occurrence"), "weather waveIndex");
+                const activeElapsedUnits = finite(checkpointDataField(activeChoice, "elapsedUnits", "weather active occurrence"), "weather elapsedUnits");
+                const choiceId = stringValue(checkpointDataField(activeChoice, "choiceId", "weather active occurrence"), "weather choiceId");
+                const expectedOccurrence = expectedActiveOccurrence;
+                if (!expectedOccurrence
+                    || activeWaveIndex !== checkpointWaveIndex
+                    || choiceId !== expectedOccurrence.choiceId
+                    || stringValue(checkpointDataField(activeChoice, "weatherId", "weather active occurrence"), "weather weatherId") !== expectedOccurrence.weatherId
+                    || stringValue(checkpointDataField(activeChoice, "zoneId", "weather active occurrence"), "weather zoneId") !== expectedOccurrence.zoneId) {
+                    throw new Error("Game checkpoint weather active occurrence provenance is invalid.");
+                }
+                const checkpointZone = checkpointDataField(activeChoice, "zone", "weather active occurrence");
+                if (canonicalStringify(checkpointZone) !== canonicalStringify(expectedOccurrence.zone)) {
+                    throw new Error("Game checkpoint weather zone provenance is invalid.");
+                }
+                const expectedOrdinals = {};
+                const definition = checkpointWeather.definitions[expectedOccurrence.weatherId];
+                for (const effectId of Object.keys(definition?.effects ?? {}).sort(compareBinary)) {
+                    const effect = definition.effects[effectId];
+                    if (effect.kind === "periodic_damage" || effect.kind === "status") {
+                        Object.defineProperty(expectedOrdinals, effectId, {
+                            value: weatherPeriodicDueOrdinalV1(activeElapsedUnits, effect.intervalUnits),
+                            enumerable: true,
+                            configurable: true,
+                            writable: true
+                        });
+                    }
+                }
+                if (canonicalStringify(periodicOrdinals) !== canonicalStringify(expectedOrdinals)) {
+                    throw new Error("Game checkpoint weather periodic ordinal provenance is invalid.");
+                }
+            }
+            else if (canonicalStringify(periodicOrdinals) !== "{}") {
+                throw new Error("Game checkpoint weather inactive periodic ordinal provenance is invalid.");
+            }
+        }
+        if (checkpointBallistics && state.ballistics) {
+            const ballistics = closed(state.ballistics, "ballistics state", ["schemaVersion", "nextProjectileSequence", "projectiles"], checkpointBallistics.projectiles.destructibles === undefined ? [] : ["destructibles"]);
+            const checkpointBallisticsSchemaVersion = integer(checkpointDataField(ballistics, "schemaVersion", "ballistics state"), "ballistics schemaVersion", 1);
+            const checkpointClearance = checkpointBallistics.projectiles.clearance;
+            const checkpointRicochet = checkpointBallistics.projectiles.ricochet;
+            const checkpointDestructibles = checkpointBallistics.projectiles.destructibles;
+            const expectedBallisticsSchemaVersion = checkpointDestructibles !== undefined
+                ? 4
+                : checkpointRicochet !== undefined
+                    ? 3
+                    : checkpointClearance === undefined ? 1 : 2;
+            if (checkpointBallisticsSchemaVersion !== expectedBallisticsSchemaVersion) {
+                throw new Error("Game checkpoint ballistics schema version is unsupported.");
+            }
+            const nextProjectileSequence = integer(checkpointDataField(ballistics, "nextProjectileSequence", "ballistics state"), "ballistics nextProjectileSequence", 1);
+            const projectiles = array(checkpointDataField(ballistics, "projectiles", "ballistics state"), "ballistics projectiles");
+            if (projectiles.length > BALLISTICS_LIMITS.activeProjectiles) {
+                throw new Error("Game checkpoint ballistics projectile limit is exceeded.");
+            }
+            const seen = new Set();
+            let previousId = "";
+            let maximumSequence = 0;
+            const map = content.maps[mission.mapId];
+            const checkpointGridMap = GridMap.fromDefinition(map);
+            const runtimeTerrainMutationKeys = new Set();
+            for (const value of array(state.runtimeTerrainOverrides, "ballistics runtimeTerrainOverrides")) {
+                const override = closed(value, "ballistics terrain override", ["q", "r", "terrain", "source"], ["expiresIn"]);
+                const q = integer(checkpointDataField(override, "q", "ballistics terrain override"), "ballistics terrain override.q");
+                const r = integer(checkpointDataField(override, "r", "ballistics terrain override"), "ballistics terrain override.r");
+                runtimeTerrainMutationKeys.add(`${q},${r}`);
+            }
+            const runtimeElevationMutationKeys = new Set();
+            if (hasTerraformingCheckpoint) {
+                const terraforming = checkpointObjectDescriptors(state.terraforming, "Game checkpoint state ballistics terraforming provenance");
+                const overrides = array(checkpointDataField(terraforming, "runtimeElevationOverrides", "ballistics terraforming provenance"), "ballistics runtimeElevationOverrides");
+                for (const value of overrides) {
+                    const override = closed(value, "ballistics elevation override", ["q", "r", "elevation"]);
+                    const q = integer(checkpointDataField(override, "q", "ballistics elevation override"), "ballistics elevation override.q");
+                    const r = integer(checkpointDataField(override, "r", "ballistics elevation override"), "ballistics elevation override.r");
+                    runtimeElevationMutationKeys.add(`${q},${r}`);
+                }
+            }
+            const authoredTerrainByCoord = new Map((map?.terrainOverrides ?? []).map((override) => [`${override.q},${override.r}`, override.terrain]));
+            const authoredElevationByCoord = new Map((map?.elevationOverrides ?? []).map((override) => [`${override.q},${override.r}`, override.elevation]));
+            const authoredDestructibles = [...(map?.destructibleObjects ?? [])]
+                .sort((left, right) => compareBinary(left.id, right.id));
+            const destructibleRowsById = new Map();
+            if (checkpointDestructibles !== undefined) {
+                const destructibles = closed(checkpointDataField(ballistics, "destructibles", "ballistics state"), "ballistics destructibles", ["schemaVersion", "objects"]);
+                if (checkpointDataField(destructibles, "schemaVersion", "ballistics destructibles") !== 1) {
+                    throw new Error("Game checkpoint ballistics destructible schema version is unsupported.");
+                }
+                const rows = array(checkpointDataField(destructibles, "objects", "ballistics destructibles"), "ballistics destructible objects");
+                if (rows.length !== authoredDestructibles.length) {
+                    throw new Error("Game checkpoint ballistics destructible objects are missing authored rows.");
+                }
+                const seenObjectIds = new Set();
+                let previousObjectId;
+                for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+                    const row = closed(rows[rowIndex], `ballistics destructible object ${rowIndex}`, ["objectId", "definitionId", "coord", "hp", "maxHp", "destroyed"]);
+                    const objectId = stringValue(checkpointDataField(row, "objectId", "ballistics destructible object"), "ballistics destructible objectId");
+                    if (previousObjectId !== undefined && compareBinary(previousObjectId, objectId) >= 0) {
+                        throw new Error("Game checkpoint ballistics destructible objects are not in canonical binary order.");
+                    }
+                    previousObjectId = objectId;
+                    if (seenObjectIds.has(objectId)) {
+                        throw new Error("Game checkpoint ballistics destructible object id is duplicate.");
+                    }
+                    seenObjectIds.add(objectId);
+                    const authored = authoredDestructibles.find((entry) => entry.id === objectId);
+                    if (!authored)
+                        throw new Error("Game checkpoint ballistics destructible object id is unknown.");
+                    const definitionId = stringValue(checkpointDataField(row, "definitionId", "ballistics destructible object"), "ballistics destructible definitionId");
+                    const definition = checkpointDestructibles.definitions[definitionId];
+                    if (definitionId !== authored.definitionId || !definition) {
+                        throw new Error("Game checkpoint ballistics destructible definition provenance is invalid.");
+                    }
+                    const coordFields = closed(checkpointDataField(row, "coord", "ballistics destructible object"), "ballistics destructible coord", ["q", "r"]);
+                    const objectCoord = {
+                        q: integer(checkpointDataField(coordFields, "q", "ballistics destructible coord"), "ballistics destructible coord.q"),
+                        r: integer(checkpointDataField(coordFields, "r", "ballistics destructible coord"), "ballistics destructible coord.r")
+                    };
+                    if (objectCoord.q !== authored.coord.q || objectCoord.r !== authored.coord.r) {
+                        throw new Error("Game checkpoint ballistics destructible object coordinate provenance is invalid.");
+                    }
+                    const maxHp = finite(checkpointDataField(row, "maxHp", "ballistics destructible object"), "ballistics destructible maxHp", Number.MIN_VALUE);
+                    const hp = finite(checkpointDataField(row, "hp", "ballistics destructible object"), "ballistics destructible hp", 0, maxHp);
+                    const destroyed = checkpointDataField(row, "destroyed", "ballistics destructible object");
+                    if (maxHp !== definition.maxHp || typeof destroyed !== "boolean" || destroyed !== (hp === 0)) {
+                        throw new Error("Game checkpoint ballistics destructible hp or destroyed state is incoherent.");
+                    }
+                    destructibleRowsById.set(objectId, { definitionId, coord: objectCoord, hp, maxHp, destroyed });
+                }
+            }
+            const baseTerrainAt = (coord) => {
+                if (!map)
+                    return undefined;
+                const key = `${coord.q},${coord.r}`;
+                if (key === `${map.spawnCoord.q},${map.spawnCoord.r}`)
+                    return "spawn";
+                if (key === `${map.coreCoord.q},${map.coreCoord.r}`)
+                    return "core";
+                return authoredTerrainByCoord.get(key) ?? map.defaultTerrain;
+            };
+            for (let index = 0; index < projectiles.length; index += 1) {
+                const projectile = closed(projectiles[index], `ballistics projectile ${index}`, [
+                    "id", "sourceCoord", "trajectory", "elapsedUnits", "travelTimeUnits", "altitude",
+                    "sourceElevation", "impact"
+                ], checkpointBallisticsSchemaVersion === 4
+                    ? ["maxAltitude", "clearanceCollision", "ricochet", "destructibleCollision"]
+                    : checkpointBallisticsSchemaVersion === 3
+                        ? ["maxAltitude", "clearanceCollision", "ricochet"]
+                        : checkpointBallisticsSchemaVersion === 2
+                            ? ["maxAltitude", "clearanceCollision"]
+                            : ["maxAltitude"]);
+                const id = stringValue(checkpointDataField(projectile, "id", "ballistics projectile"), "ballistics projectile id");
+                const idMatch = /^projectile_([1-9][0-9]*)$/.exec(id);
+                const sequence = idMatch ? Number(idMatch[1]) : NaN;
+                if (!Number.isSafeInteger(sequence) || seen.has(id) || (previousId && compareBinary(previousId, id) >= 0)) {
+                    throw new Error("Game checkpoint ballistics projectile id is invalid, duplicate, or non-canonical.");
+                }
+                seen.add(id);
+                previousId = id;
+                maximumSequence = Math.max(maximumSequence, sequence);
+                const coord = (value, label) => {
+                    const fields = closed(value, label, ["q", "r"]);
+                    const q = integer(checkpointDataField(fields, "q", label), `${label}.q`);
+                    const r = integer(checkpointDataField(fields, "r", label), `${label}.r`);
+                    if (!map || q >= map.width || r >= map.height) {
+                        throw new Error(`Game checkpoint ${label} is outside the authored map.`);
+                    }
+                    return { q, r };
+                };
+                const sourceCoord = coord(checkpointDataField(projectile, "sourceCoord", "ballistics projectile"), "ballistics sourceCoord");
+                const trajectory = stringValue(checkpointDataField(projectile, "trajectory", "ballistics projectile"), "ballistics trajectory");
+                if (trajectory !== "direct" && trajectory !== "arc") {
+                    throw new Error("Game checkpoint ballistics trajectory is invalid.");
+                }
+                const travelTimeUnits = finite(checkpointDataField(projectile, "travelTimeUnits", "ballistics projectile"), "ballistics travelTimeUnits", Number.MIN_VALUE, BALLISTICS_LIMITS.travelTimeUnits);
+                const elapsedUnits = finite(checkpointDataField(projectile, "elapsedUnits", "ballistics projectile"), "ballistics elapsedUnits", 0, travelTimeUnits);
+                const sourceElevation = finite(checkpointDataField(projectile, "sourceElevation", "ballistics projectile"), "ballistics sourceElevation", -BALLISTICS_LIMITS.maxAltitude, BALLISTICS_LIMITS.maxAltitude);
+                const maxAltitude = own(projectile, "maxAltitude")
+                    ? finite(checkpointDataField(projectile, "maxAltitude", "ballistics projectile"), "ballistics maxAltitude", Number.MIN_VALUE, BALLISTICS_LIMITS.maxAltitude)
+                    : undefined;
+                if ((trajectory === "arc") !== (maxAltitude !== undefined)) {
+                    throw new Error("Game checkpoint ballistics arc altitude contract is invalid.");
+                }
+                const progress = elapsedUnits / travelTimeUnits;
+                const altitude = finite(checkpointDataField(projectile, "altitude", "ballistics projectile"), "ballistics altitude", -BALLISTICS_LIMITS.maxAltitude * 2, BALLISTICS_LIMITS.maxAltitude * 2);
+                const impact = closed(checkpointDataField(projectile, "impact", "ballistics projectile"), "ballistics impact", ["targetCoord", "targetElevation", "damagePacket"]);
+                const targetCoord = coord(checkpointDataField(impact, "targetCoord", "ballistics impact"), "ballistics targetCoord");
+                const targetElevation = finite(checkpointDataField(impact, "targetElevation", "ballistics impact"), "ballistics targetElevation", -BALLISTICS_LIMITS.maxAltitude, BALLISTICS_LIMITS.maxAltitude);
+                const expectedAltitude = sourceElevation + (targetElevation - sourceElevation) * progress
+                    + (trajectory === "arc" ? 4 * maxAltitude * progress * (1 - progress) : 0);
+                if (Math.abs(altitude - expectedAltitude) > 1e-9) {
+                    throw new Error("Game checkpoint ballistics projectile altitude is incoherent.");
+                }
+                if (checkpointBallisticsSchemaVersion >= 2 && own(projectile, "clearanceCollision")) {
+                    const collision = closed(checkpointDataField(projectile, "clearanceCollision", "ballistics projectile"), "ballistics clearance collision", ["blockerCoord", "terrainId", "blockerTag", "blockerElevation", "elapsedUnits"]);
+                    const blockerCoord = coord(checkpointDataField(collision, "blockerCoord", "ballistics clearance collision"), "ballistics clearance blockerCoord");
+                    const terrainId = stringValue(checkpointDataField(collision, "terrainId", "ballistics clearance collision"), "ballistics clearance terrainId");
+                    const blockerTag = stringValue(checkpointDataField(collision, "blockerTag", "ballistics clearance collision"), "ballistics clearance blockerTag");
+                    const blockerElevation = finite(checkpointDataField(collision, "blockerElevation", "ballistics clearance collision"), "ballistics clearance blockerElevation", -BALLISTICS_LIMITS.maxAltitude, BALLISTICS_LIMITS.maxAltitude);
+                    const collisionElapsed = finite(checkpointDataField(collision, "elapsedUnits", "ballistics clearance collision"), "ballistics clearance elapsedUnits", Number.MIN_VALUE, travelTimeUnits);
+                    const topologyLine = createGridTopology(map?.grid).line(sourceCoord, targetCoord);
+                    const blockerIndex = topologyLine.findIndex((entry, lineIndex) => (lineIndex > 0 && lineIndex < topologyLine.length - 1
+                        && entry.q === blockerCoord.q && entry.r === blockerCoord.r));
+                    if (blockerIndex < 1 || topologyLine.length - 1 > ARC_CLEARANCE_LIMITS.maximumRayDistance) {
+                        throw new Error("Game checkpoint ballistics clearance collision coordinate provenance is invalid.");
+                    }
+                    const expectedCollisionElapsed = travelTimeUnits * blockerIndex / (topologyLine.length - 1);
+                    if (Math.abs(collisionElapsed - expectedCollisionElapsed) > 1e-9 || elapsedUnits > collisionElapsed + 1e-9) {
+                        throw new Error("Game checkpoint ballistics clearance collision elapsed provenance is invalid.");
+                    }
+                    const terrain = content.terrainTypes[terrainId];
+                    const blockerHeight = checkpointClearance?.terrainBlockerHeights[blockerTag];
+                    if (!terrain || blockerHeight === undefined || !terrain.tags.includes(blockerTag)) {
+                        throw new Error("Game checkpoint ballistics clearance collision terrain provenance is invalid.");
+                    }
+                    let selectedTag;
+                    let selectedHeight = Number.NEGATIVE_INFINITY;
+                    for (const tag of terrain.tags) {
+                        if (!Object.prototype.hasOwnProperty.call(checkpointClearance.terrainBlockerHeights, tag))
+                            continue;
+                        const height = checkpointClearance.terrainBlockerHeights[tag];
+                        if (height > selectedHeight || (height === selectedHeight && (selectedTag === undefined || tag < selectedTag))) {
+                            selectedTag = tag;
+                            selectedHeight = height;
+                        }
+                    }
+                    const collisionProgress = blockerIndex / (topologyLine.length - 1);
+                    const collisionAltitude = projectileAltitudeAtProgress(sourceElevation, targetElevation, trajectory, maxAltitude, collisionProgress);
+                    if (selectedTag !== blockerTag || collisionAltitude > blockerElevation + blockerHeight) {
+                        throw new Error("Game checkpoint ballistics clearance collision blocker provenance is invalid.");
+                    }
+                    const blockerKey = `${blockerCoord.q},${blockerCoord.r}`;
+                    if (!runtimeTerrainMutationKeys.has(blockerKey)
+                        && !runtimeElevationMutationKeys.has(blockerKey)
+                        && (baseTerrainAt(blockerCoord) !== terrainId
+                            || (authoredElevationByCoord.get(blockerKey) ?? 0) !== blockerElevation)) {
+                        throw new Error("Game checkpoint ballistics clearance collision authored provenance is invalid.");
+                    }
+                    for (let lineIndex = 1; lineIndex < blockerIndex; lineIndex += 1) {
+                        const earlierCoord = topologyLine[lineIndex];
+                        const earlierKey = `${earlierCoord.q},${earlierCoord.r}`;
+                        // An active terrain/elevation override may have been applied after launch. The stored
+                        // collision remains authoritative in that case, so only immutable authored cells can
+                        // prove that a forged checkpoint skipped the first launch-time blocker.
+                        if (runtimeTerrainMutationKeys.has(earlierKey) || runtimeElevationMutationKeys.has(earlierKey))
+                            continue;
+                        const earlierTerrainId = baseTerrainAt(earlierCoord);
+                        const earlierTerrain = earlierTerrainId === undefined ? undefined : content.terrainTypes[earlierTerrainId];
+                        let earlierTag;
+                        let earlierHeight = Number.NEGATIVE_INFINITY;
+                        for (const tag of earlierTerrain?.tags ?? []) {
+                            if (!Object.prototype.hasOwnProperty.call(checkpointClearance.terrainBlockerHeights, tag))
+                                continue;
+                            const height = checkpointClearance.terrainBlockerHeights[tag];
+                            if (height > earlierHeight || (height === earlierHeight && (earlierTag === undefined || tag < earlierTag))) {
+                                earlierTag = tag;
+                                earlierHeight = height;
+                            }
+                        }
+                        if (earlierTag === undefined)
+                            continue;
+                        const earlierProgress = lineIndex / (topologyLine.length - 1);
+                        const earlierAltitude = projectileAltitudeAtProgress(sourceElevation, targetElevation, trajectory, maxAltitude, earlierProgress);
+                        const earlierElevation = authoredElevationByCoord.get(earlierKey) ?? 0;
+                        if (earlierAltitude <= earlierElevation + earlierHeight) {
+                            throw new Error("Game checkpoint ballistics clearance collision skipped the first blocker provenance.");
+                        }
+                    }
+                }
+                if (checkpointBallisticsSchemaVersion === 4 && own(projectile, "destructibleCollision")) {
+                    if (own(projectile, "clearanceCollision")) {
+                        throw new Error("Game checkpoint ballistics projectile has conflicting terminal collisions.");
+                    }
+                    const collision = closed(checkpointDataField(projectile, "destructibleCollision", "ballistics projectile"), "ballistics destructible collision", [
+                        "kind", "objectId", "definitionId", "collisionCoord",
+                        "blockerElevation", "blockerHeight", "elapsedUnits"
+                    ]);
+                    if (checkpointDataField(collision, "kind", "ballistics destructible collision") !== "map_object") {
+                        throw new Error("Game checkpoint ballistics destructible collision kind is invalid.");
+                    }
+                    const objectId = stringValue(checkpointDataField(collision, "objectId", "ballistics destructible collision"), "ballistics destructible collision objectId");
+                    const definitionId = stringValue(checkpointDataField(collision, "definitionId", "ballistics destructible collision"), "ballistics destructible collision definitionId");
+                    const object = destructibleRowsById.get(objectId);
+                    const definition = checkpointDestructibles?.definitions[definitionId];
+                    if (!object || object.definitionId !== definitionId || !definition) {
+                        throw new Error("Game checkpoint ballistics destructible collision object provenance is invalid.");
+                    }
+                    const collisionCoord = coord(checkpointDataField(collision, "collisionCoord", "ballistics destructible collision"), "ballistics destructible collisionCoord");
+                    if (collisionCoord.q !== object.coord.q || collisionCoord.r !== object.coord.r) {
+                        throw new Error("Game checkpoint ballistics destructible collision coordinate provenance is invalid.");
+                    }
+                    const blockerElevation = finite(checkpointDataField(collision, "blockerElevation", "ballistics destructible collision"), "ballistics destructible blockerElevation", -BALLISTICS_LIMITS.maxAltitude, BALLISTICS_LIMITS.maxAltitude);
+                    const blockerHeight = finite(checkpointDataField(collision, "blockerHeight", "ballistics destructible collision"), "ballistics destructible blockerHeight", 0, BALLISTICS_LIMITS.maxAltitude);
+                    const collisionElapsed = finite(checkpointDataField(collision, "elapsedUnits", "ballistics destructible collision"), "ballistics destructible collision elapsedUnits", Number.MIN_VALUE, travelTimeUnits);
+                    const topologyLine = createGridTopology(map?.grid).line(sourceCoord, targetCoord);
+                    const objectIndex = topologyLine.findIndex((entry, lineIndex) => (lineIndex > 0 && entry.q === collisionCoord.q && entry.r === collisionCoord.r));
+                    const expectedElapsed = objectIndex < 1
+                        ? Number.NaN
+                        : travelTimeUnits * objectIndex / (topologyLine.length - 1);
+                    const collisionKey = `${collisionCoord.q},${collisionCoord.r}`;
+                    const authoredElevation = authoredElevationByCoord.get(collisionKey) ?? 0;
+                    const collisionAltitude = objectIndex < 1
+                        ? Number.POSITIVE_INFINITY
+                        : projectileAltitudeAtProgress(sourceElevation, targetElevation, trajectory, maxAltitude, objectIndex / (topologyLine.length - 1));
+                    if (objectIndex < 1
+                        || topologyLine.length - 1 > DESTRUCTIBLE_COLLISION_LIMITS.maximumRayDistance
+                        || Math.abs(collisionElapsed - expectedElapsed) > 1e-9
+                        || elapsedUnits > collisionElapsed + 1e-9
+                        || blockerHeight !== definition.hitRegion.blockerHeight
+                        || (!runtimeElevationMutationKeys.has(collisionKey) && blockerElevation !== authoredElevation)
+                        || collisionAltitude > blockerElevation + blockerHeight) {
+                        throw new Error("Game checkpoint ballistics destructible collision provenance is incoherent.");
+                    }
+                }
+                const packet = checkpointDataField(impact, "damagePacket", "ballistics impact");
+                validateDamagePacket(packet);
+                if (packet.source.kind !== "tower" || !content.towers[packet.source.towerTypeId]
+                    || packet.target.kind !== "enemy" || !content.enemies[packet.target.enemyTypeId]) {
+                    throw new Error("Game checkpoint ballistics damage packet has invalid authored provenance.");
+                }
+                const towerBinding = checkpointBallistics.projectiles.towers[packet.source.towerTypeId];
+                if (!towerBinding
+                    || trajectory !== towerBinding.trajectory
+                    || travelTimeUnits !== towerBinding.travelTimeUnits
+                    || maxAltitude !== towerBinding.maxAltitude) {
+                    throw new Error("Game checkpoint ballistics projectile binding provenance is invalid.");
+                }
+                const authoredRicochet = towerBinding?.ricochet;
+                const hasRicochetState = own(projectile, "ricochet");
+                if (checkpointBallisticsSchemaVersion >= 3 && (authoredRicochet !== undefined) !== hasRicochetState) {
+                    throw new Error("Game checkpoint ballistics ricochet binding provenance is invalid.");
+                }
+                if (hasRicochetState) {
+                    if (checkpointBallisticsSchemaVersion < 3 || authoredRicochet === undefined || checkpointRicochet === undefined) {
+                        throw new Error("Game checkpoint ballistics ricochet state is unsupported.");
+                    }
+                    const ricochet = closed(checkpointDataField(projectile, "ricochet", "ballistics projectile"), "ballistics ricochet state", ["schemaVersion", "maxBounces", "rangeCells", "bounceCount", "segmentHasTarget"], ["lastCollision"]);
+                    if (checkpointDataField(ricochet, "schemaVersion", "ballistics ricochet state") !== 1) {
+                        throw new Error("Game checkpoint ballistics ricochet schema version is unsupported.");
+                    }
+                    const maxBounces = integer(checkpointDataField(ricochet, "maxBounces", "ballistics ricochet state"), "ballistics ricochet maxBounces", 1);
+                    const rangeCells = integer(checkpointDataField(ricochet, "rangeCells", "ballistics ricochet state"), "ballistics ricochet rangeCells", 1);
+                    const bounceCount = integer(checkpointDataField(ricochet, "bounceCount", "ballistics ricochet state"), "ballistics ricochet bounceCount");
+                    const segmentHasTarget = checkpointDataField(ricochet, "segmentHasTarget", "ballistics ricochet state");
+                    if (typeof segmentHasTarget !== "boolean") {
+                        throw new Error("Game checkpoint ballistics ricochet segmentHasTarget must be boolean.");
+                    }
+                    if (maxBounces !== authoredRicochet.maxBounces
+                        || rangeCells !== authoredRicochet.rangeCells
+                        || bounceCount > maxBounces) {
+                        throw new Error("Game checkpoint ballistics ricochet bounce provenance exceeds its authored maximum.");
+                    }
+                    const hasLastCollision = own(ricochet, "lastCollision");
+                    if ((bounceCount > 0) !== hasLastCollision) {
+                        throw new Error("Game checkpoint ballistics ricochet collision provenance is incoherent.");
+                    }
+                    if (hasLastCollision) {
+                        const collision = closed(checkpointDataField(ricochet, "lastCollision", "ballistics ricochet state"), "ballistics ricochet lastCollision", ["kind", "surfaceId", "collisionCoord", "incomingFromCoord"]);
+                        const kind = stringValue(checkpointDataField(collision, "kind", "ballistics ricochet lastCollision"), "ballistics ricochet collision kind");
+                        if (kind !== "terrain" && kind !== "armor") {
+                            throw new Error("Game checkpoint ballistics ricochet collision kind is invalid.");
+                        }
+                        const surfaceId = stringValue(checkpointDataField(collision, "surfaceId", "ballistics ricochet lastCollision"), "ballistics ricochet collision surfaceId");
+                        const surfaceEnabled = kind === "terrain"
+                            ? checkpointRicochet.terrainTags?.[surfaceId] === true
+                            : checkpointRicochet.armorTypes?.[surfaceId] === true;
+                        if (!surfaceEnabled) {
+                            throw new Error("Game checkpoint ballistics ricochet collision surface provenance is invalid.");
+                        }
+                        const collisionCoord = coord(checkpointDataField(collision, "collisionCoord", "ballistics ricochet lastCollision"), "ballistics ricochet collisionCoord");
+                        const incomingFromCoord = coord(checkpointDataField(collision, "incomingFromCoord", "ballistics ricochet lastCollision"), "ballistics ricochet incomingFromCoord");
+                        const ray = traceProjectileRicochetRayV1(checkpointGridMap, { kind, collisionCoord, incomingFromCoord, rangeCells });
+                        if (!ray.ok
+                            || ray.nextSourceCoord.q !== sourceCoord.q
+                            || ray.nextSourceCoord.r !== sourceCoord.r
+                            || !ray.ray.some((candidate) => candidate.q === targetCoord.q && candidate.r === targetCoord.r)) {
+                            throw new Error("Game checkpoint ballistics ricochet reflected ray provenance is invalid.");
+                        }
+                        if (segmentHasTarget && packet.target.componentId !== undefined) {
+                            throw new Error("Game checkpoint ballistics ricochet reflected target must address the enemy root.");
+                        }
+                    }
+                }
+            }
+            if (maximumSequence >= nextProjectileSequence) {
+                throw new Error("Game checkpoint ballistics projectile sequence is incoherent.");
+            }
+        }
         const validateDirectorReason = (value, label, counterId) => {
             const base = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
             const metric = stringValue(checkpointDataField(base, "metric", label), `${label}.metric`);
@@ -3881,13 +4807,10 @@ export class TowerDefenseGame {
         finite(state.coreHp, "coreHp");
         const currencyIds = new Set(content.currencies.map((currency) => currency.id));
         recordNumbers(state.resources, "resources", currencyIds);
-        const waveIndex = integer(state.waveIndex, "waveIndex");
+        const waveIndex = checkpointWaveIndex;
         const startedWaveCount = integer(state.startedWaveCount, "startedWaveCount");
         if (waveIndex >= Math.max(1, mission.waves.length) || startedWaveCount > mission.waves.length) {
             throw new Error("Game checkpoint state wave position is outside the mission.");
-        }
-        if (!(new Set(["ready", "spawning", "between", "complete"])).has(state.waveState)) {
-            throw new Error("Game checkpoint state waveState is invalid.");
         }
         if (!(new Set(["playing", "victory", "defeat"])).has(state.outcome)) {
             throw new Error("Game checkpoint state outcome is invalid.");
@@ -3939,6 +4862,23 @@ export class TowerDefenseGame {
                     : { enemyMovementProfiles: selectedNavigation.enemyMovementProfiles })
             }
             : undefined;
+        const checkpointFormationAssignments = activeNavigationProfile && checkpointEnemyBehaviors?.formations
+            ? new Map(Object.entries(checkpointEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+                enemyTypeId,
+                Object.freeze({
+                    cohortId,
+                    role,
+                    steering: cohort.steering,
+                    ...(cohort.protection === undefined ? {} : { protection: cohort.protection })
+                })
+            ]))))
+            : undefined;
+        const checkpointFormationProtection = checkpointFormationAssignments
+            ? Object.fromEntries(Object.entries(checkpointEnemyBehaviors?.formations?.cohorts ?? {})
+                .filter(([, cohort]) => cohort.protection !== undefined)
+                .sort(([left], [right]) => compareBinary(left, right))
+                .map(([cohortId, cohort]) => [cohortId, cohort.protection]))
+            : {};
         const optionalRoute = (descriptors, label) => {
             if (!own(descriptors, "routeId"))
                 return;
@@ -3951,6 +4891,8 @@ export class TowerDefenseGame {
                 finite(checkpointDataField(object, key, label), `${label}.${key}`, minimum, maximum);
         };
         const enemyIds = new Set();
+        const liveEnemyIds = new Set();
+        const enemyTypeByInstance = new Map();
         const disruptTargetReferences = [];
         const navigationStates = [];
         let liveNavigationStates = 0;
@@ -3976,6 +4918,7 @@ export class TowerDefenseGame {
                 throw new Error("Game checkpoint state enemy id suffix is unsafe.");
             maxEnemyId = Math.max(maxEnemyId, numericId);
             enemyIds.add(id);
+            enemyTypeByInstance.set(id, typeId);
             for (const key of ["hp", "maxHp", "pathProgress", "dotRemaining", "pathOffset"]) {
                 finite(checkpointDataField(enemy, key, "Game checkpoint enemy"), `enemy.${key}`, key === "pathOffset" ? -Infinity : 0);
             }
@@ -3989,6 +4932,8 @@ export class TowerDefenseGame {
             if (maxHp !== expectedMaxHp || typeof hp !== "number" || hp > expectedMaxHp) {
                 throw new Error("Game checkpoint enemy hp or maxHp is inconsistent with authored content.");
             }
+            if (hp > 0)
+                liveEnemyIds.add(id);
             if (own(enemy, "dotSourceTowerTypeId")) {
                 const towerTypeId = stringValue(checkpointDataField(enemy, "dotSourceTowerTypeId", "enemy"), "enemy.dotSourceTowerTypeId");
                 if (!own(content.towers, towerTypeId))
@@ -4111,6 +5056,136 @@ export class TowerDefenseGame {
         }
         if (enemyCounter < maxEnemyId)
             throw new Error("Game checkpoint enemy counter is below a live enemy id.");
+        let checkpointVanguardProtectionTransactionsThisTick;
+        if (checkpointEnemyBehaviors) {
+            const protectionCohortIds = Object.keys(checkpointFormationProtection);
+            const hasProtectionRuntime = protectionCohortIds.length > 0;
+            const enemyBehaviorsValue = checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state");
+            const enemyBehaviorsDescriptors = checkpointObjectDescriptors(enemyBehaviorsValue, "Game checkpoint state enemyBehaviors state");
+            if (!hasProtectionRuntime && own(enemyBehaviorsDescriptors, "protectionRuntime")) {
+                throw new Error("Game checkpoint enemyBehaviors protectionRuntime is unsupported when formation protection is inactive.");
+            }
+            const section = closed(enemyBehaviorsValue, "enemyBehaviors state", [
+                "schemaVersion",
+                "components",
+                ...(checkpointFormationAssignments ? ["formations"] : []),
+                ...(hasProtectionRuntime ? ["protectionRuntime"] : [])
+            ]);
+            if (checkpointDataField(section, "schemaVersion", "enemyBehaviors state") !== 1) {
+                throw new Error("Game checkpoint enemyBehaviors schema version is unsupported.");
+            }
+            if (hasProtectionRuntime) {
+                const protectionRuntime = checkpointObjectDescriptors(checkpointDataField(section, "protectionRuntime", "enemyBehaviors state"), "Game checkpoint state enemyBehaviors protectionRuntime");
+                checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime");
+                checkpointDataField(protectionRuntime, "transactionsThisTick", "enemyBehaviors protectionRuntime");
+                const unsupportedProtectionRuntimeKey = Object.keys(protectionRuntime)
+                    .find((key) => key !== "schemaVersion" && key !== "transactionsThisTick");
+                if (unsupportedProtectionRuntimeKey !== undefined) {
+                    throw new Error(`Game checkpoint enemyBehaviors protectionRuntime closed schema contains unknown field "${unsupportedProtectionRuntimeKey}".`);
+                }
+                if (checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime") !== 1) {
+                    throw new Error("Game checkpoint enemyBehaviors protectionRuntime schema version is unsupported.");
+                }
+                const transactionsThisTick = checkpointDataField(protectionRuntime, "transactionsThisTick", "enemyBehaviors protectionRuntime");
+                if (typeof transactionsThisTick !== "number"
+                    || !Number.isSafeInteger(transactionsThisTick)
+                    || transactionsThisTick < 0
+                    || transactionsThisTick > ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick) {
+                    throw new Error(`Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must be an integer in range 0..${ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick}.`);
+                }
+                checkpointVanguardProtectionTransactionsThisTick = transactionsThisTick;
+            }
+            const componentEnemies = checkpointObjectDescriptors(checkpointDataField(section, "components", "enemyBehaviors state"), "Game checkpoint enemyBehaviors components");
+            const expectedEnemyIds = [...enemyTypeByInstance.entries()]
+                .filter(([, typeId]) => checkpointEnemyBehaviors.bosses?.[typeId] !== undefined)
+                .map(([enemyId]) => enemyId)
+                .sort(compareBinary);
+            const actualEnemyIds = Object.keys(componentEnemies);
+            if (actualEnemyIds.join("\u0000") !== expectedEnemyIds.join("\u0000")) {
+                throw new Error("Game checkpoint enemyBehaviors state has missing, extra, or non-canonical enemy ids.");
+            }
+            for (const enemyId of actualEnemyIds) {
+                const typeId = enemyTypeByInstance.get(enemyId);
+                const authoredBoss = checkpointEnemyBehaviors.bosses?.[typeId];
+                if (!authoredBoss)
+                    throw new Error("Game checkpoint enemyBehaviors state references a non-component enemy.");
+                const authored = authoredBoss.components;
+                const componentRecord = checkpointObjectDescriptors(checkpointDataField(componentEnemies, enemyId, "enemyBehaviors components"), `Game checkpoint enemyBehaviors components for ${enemyId}`);
+                const expectedComponentIds = Object.keys(authored).sort(compareBinary);
+                const actualComponentIds = Object.keys(componentRecord);
+                if (actualComponentIds.join("\u0000") !== expectedComponentIds.join("\u0000")) {
+                    throw new Error(`Game checkpoint enemyBehaviors state for "${enemyId}" has invalid component ids.`);
+                }
+                for (const componentId of actualComponentIds) {
+                    const definition = authored[componentId];
+                    const component = closed(checkpointDataField(componentRecord, componentId, `enemyBehaviors components for ${enemyId}`), `enemyBehaviors component ${enemyId}.${componentId}`, ["hp", "maxHp"], definition.shield === undefined ? [] : ["shield"]);
+                    const expectedMaxHp = definition.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+                    if (checkpointDataField(component, "maxHp", componentId) !== expectedMaxHp) {
+                        throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" maxHp differs from authored content.`);
+                    }
+                    finite(checkpointDataField(component, "hp", componentId), `${componentId}.hp`, 0, expectedMaxHp);
+                    const hasShield = own(component, "shield");
+                    if ((definition.shield !== undefined) !== hasShield) {
+                        throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" shield state is inconsistent.`);
+                    }
+                    if (definition.shield && hasShield) {
+                        const shield = closed(checkpointDataField(component, "shield", componentId), `${componentId}.shield`, ["current", "capacity", "regenerationDelayRemaining"]);
+                        if (checkpointDataField(shield, "capacity", componentId) !== definition.shield.capacity) {
+                            throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" shield capacity differs.`);
+                        }
+                        finite(checkpointDataField(shield, "current", componentId), `${componentId}.shield.current`, 0, definition.shield.capacity);
+                        finite(checkpointDataField(shield, "regenerationDelayRemaining", componentId), `${componentId}.shield.regenerationDelayRemaining`, 0, definition.shield.regeneration?.delayAfterDamage ?? 0);
+                    }
+                }
+            }
+            if (checkpointFormationAssignments) {
+                const formations = closed(checkpointDataField(section, "formations", "enemyBehaviors state"), "enemyBehaviors formations state", protectionCohortIds.length > 0
+                    ? ["schemaVersion", "enemies", "protection"]
+                    : ["schemaVersion", "enemies"]);
+                if (checkpointDataField(formations, "schemaVersion", "enemyBehaviors formations state") !== 1) {
+                    throw new Error("Game checkpoint enemyBehaviors formation schema version is unsupported.");
+                }
+                const formationEnemies = checkpointObjectDescriptors(checkpointDataField(formations, "enemies", "enemyBehaviors formations state"), "Game checkpoint enemyBehaviors formation enemies");
+                const expectedFormationEnemyIds = [...enemyTypeByInstance.entries()]
+                    .filter(([enemyId, typeId]) => liveEnemyIds.has(enemyId) && checkpointFormationAssignments.has(typeId))
+                    .map(([enemyId]) => enemyId)
+                    .sort(compareBinary);
+                const actualFormationEnemyIds = Object.keys(formationEnemies);
+                if (actualFormationEnemyIds.join("\u0000") !== expectedFormationEnemyIds.join("\u0000")) {
+                    throw new Error("Game checkpoint enemyBehaviors formation state has missing, stale, extra, or non-canonical enemy ids.");
+                }
+                for (const enemyId of actualFormationEnemyIds) {
+                    const typeId = enemyTypeByInstance.get(enemyId);
+                    const expected = checkpointFormationAssignments.get(typeId);
+                    const membership = closed(checkpointDataField(formationEnemies, enemyId, "enemyBehaviors formation enemies"), `enemyBehaviors formation membership ${enemyId}`, ["cohortId", "role"]);
+                    if (checkpointDataField(membership, "cohortId", `formation membership ${enemyId}`) !== expected.cohortId
+                        || checkpointDataField(membership, "role", `formation membership ${enemyId}`) !== expected.role) {
+                        throw new Error(`Game checkpoint enemyBehaviors formation membership for "${enemyId}" has an invalid cohort or role.`);
+                    }
+                }
+                if (protectionCohortIds.length > 0) {
+                    const protection = closed(checkpointDataField(formations, "protection", "enemyBehaviors formations state"), "enemyBehaviors formation protection state", ["schemaVersion", "cohorts"]);
+                    if (checkpointDataField(protection, "schemaVersion", "enemyBehaviors formation protection state") !== 1) {
+                        throw new Error("Game checkpoint enemyBehaviors formation protection schema version is unsupported.");
+                    }
+                    const cohorts = checkpointObjectDescriptors(checkpointDataField(protection, "cohorts", "enemyBehaviors formation protection state"), "Game checkpoint enemyBehaviors formation protection cohorts");
+                    if (Object.keys(cohorts).join("\u0000") !== protectionCohortIds.join("\u0000")) {
+                        throw new Error("Game checkpoint enemyBehaviors formation protection cohorts are missing, extra, or non-canonical.");
+                    }
+                    for (const cohortId of protectionCohortIds) {
+                        const authored = checkpointFormationProtection[cohortId];
+                        const cohort = closed(checkpointDataField(cohorts, cohortId, "enemyBehaviors formation protection cohorts"), `enemyBehaviors formation protection ${cohortId}`, ["radius", "sourceKinds"]);
+                        if (checkpointDataField(cohort, "radius", `formation protection ${cohortId}`) !== authored.radius) {
+                            throw new Error(`Game checkpoint enemyBehaviors formation protection radius for "${cohortId}" differs from authored content.`);
+                        }
+                        const sourceKinds = stringArray(checkpointDataField(cohort, "sourceKinds", `formation protection ${cohortId}`), `formation protection ${cohortId}.sourceKinds`, true);
+                        if (sourceKinds.join("\u0000") !== authored.sourceKinds.join("\u0000")) {
+                            throw new Error(`Game checkpoint enemyBehaviors formation protection sources for "${cohortId}" differ from authored content.`);
+                        }
+                    }
+                }
+            }
+        }
         const towerIds = new Set();
         const towerStateById = new Map();
         const occupiedCoords = new Set();
@@ -4672,6 +5747,19 @@ export class TowerDefenseGame {
                 ]
             },
             waveStarted: { required: ["type", "waveIndex"] },
+            weatherStarted: {
+                required: ["type", "profileId", "waveIndex", "choiceId", "weatherId", "zoneId"]
+            },
+            weatherEnded: {
+                required: ["type", "profileId", "waveIndex", "choiceId", "weatherId", "zoneId", "reason"]
+            },
+            weatherEffectApplied: {
+                required: [
+                    "type", "profileId", "waveIndex", "choiceId", "weatherId", "zoneId", "effectId",
+                    "kind", "applicationOrdinal", "affectedCount"
+                ]
+            },
+            weatherBudgetExceeded: { required: ["type", "profileId", "waveIndex", "limit"] },
             directorDecision: { required: ["type", "waveIndex", "counterId", "threatCost", "reason", "addedGroups"] },
             waveCleared: { required: ["type", "waveIndex", "income", "interest"] },
             questCompleted: { required: ["type", "questId", "kind"] },
@@ -4682,9 +5770,35 @@ export class TowerDefenseGame {
             starEarned: { required: ["type", "starId"] },
             towerFired: { required: ["type", "towerId", "enemyId", "damage"] },
             enemyHit: { required: ["type", "towerId", "enemyId", "enemyTypeId", "damage"] },
+            destructibleObjectDamaged: {
+                required: [
+                    "type", "projectileId", "objectId", "definitionId", "coord", "fromHp", "toHp", "damage"
+                ]
+            },
+            destructibleObjectDestroyed: {
+                required: ["type", "projectileId", "objectId", "definitionId", "coord"]
+            },
             enemyShieldChanged: {
                 required: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount"],
                 optional: ["overflowDamage"]
+            },
+            bossComponentDamaged: {
+                required: [
+                    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+                    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+                ]
+            },
+            bossComponentDestroyed: {
+                required: [
+                    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+                    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+                ]
+            },
+            vanguardDamageIntercepted: {
+                required: [
+                    "type", "cohortId", "protectedEnemyId", "protectedEnemyTypeId", "vanguardEnemyId",
+                    "vanguardEnemyTypeId", "sourceKind", "requestedAmount", "originalComponentId"
+                ]
             },
             enemyMarkChanged: {
                 required: [
@@ -4734,7 +5848,8 @@ export class TowerDefenseGame {
             "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
             "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
             "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints",
-            "threatCost"
+            "threatCost", "previousHp", "currentHp", "maxHp", "previousShield", "currentShield", "shieldCapacity",
+            "requestedAmount", "fromHp", "toHp", "applicationOrdinal", "affectedCount"
         ]);
         const stringEventFields = new Set([
             "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -4743,7 +5858,10 @@ export class TowerDefenseGame {
             "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
             "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
             "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
-            "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+            "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath",
+            "componentId", "cohortId", "protectedEnemyId", "protectedEnemyTypeId", "vanguardEnemyId",
+            "vanguardEnemyTypeId", "projectileId", "objectId", "definitionId", "profileId", "choiceId",
+            "weatherId", "zoneId", "effectId", "reason"
         ]);
         const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
         const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -4752,6 +5870,7 @@ export class TowerDefenseGame {
         let retainedHeroSkillPointState;
         const checkpointTransitionEvents = [];
         const checkpointEvents = array(state.lastEvents, "lastEvents");
+        let checkpointVanguardInterceptionEventCount = 0;
         for (const [eventIndex, value] of checkpointEvents.entries()) {
             const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
             const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
@@ -4790,6 +5909,10 @@ export class TowerDefenseGame {
                     validateDiagnostic(field, "event script diagnostic");
                 else if (key === "payload")
                     validateScriptJson(field, `last event ${type}.${key}`);
+                else if (key === "originalComponentId") {
+                    if (field !== null)
+                        stringValue(field, `last event ${type}.${key}`);
+                }
                 else if (key === "reason")
                     validateDirectorReason(field, `last event ${type}.reason`, stringValue(checkpointDataField(event, "counterId", `last event ${type}`), `last event ${type}.counterId`));
                 else if (key === "addedGroups")
@@ -4867,6 +5990,67 @@ export class TowerDefenseGame {
                     fromStatePath: stringValue(checkpointDataField(event, "fromStatePath", type), `${type}.fromStatePath`),
                     toStatePath: stringValue(checkpointDataField(event, "toStatePath", type), `${type}.toStatePath`)
                 });
+            }
+            if (type === "bossComponentDamaged" || type === "bossComponentDestroyed") {
+                if (!checkpointEnemyBehaviors) {
+                    throw new Error("Game checkpoint boss component event requires active enemyBehaviors.");
+                }
+                const enemyTypeId = stringValue(checkpointDataField(event, "enemyTypeId", type), `${type}.enemyTypeId`);
+                const componentId = stringValue(checkpointDataField(event, "componentId", type), `${type}.componentId`);
+                const definition = checkpointEnemyBehaviors.bosses?.[enemyTypeId]?.components[componentId];
+                if (!definition)
+                    throw new Error("Game checkpoint boss component event references an unknown component.");
+                const sourceKind = checkpointDataField(event, "sourceKind", type);
+                if (!["tower", "ability", "tower_script", "status", "reaction", "enemy", "leak"].includes(String(sourceKind))) {
+                    throw new Error("Game checkpoint boss component event sourceKind is invalid.");
+                }
+                const expectedMaxHp = definition.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+                const maxHp = finite(checkpointDataField(event, "maxHp", type), `${type}.maxHp`, Number.MIN_VALUE, expectedMaxHp);
+                const previousHp = finite(checkpointDataField(event, "previousHp", type), `${type}.previousHp`, 0, expectedMaxHp);
+                const currentHp = finite(checkpointDataField(event, "currentHp", type), `${type}.currentHp`, 0, expectedMaxHp);
+                const hpDamage = finite(checkpointDataField(event, "hpDamage", type), `${type}.hpDamage`, 0, expectedMaxHp);
+                const expectedShieldCapacity = definition.shield?.capacity ?? 0;
+                const shieldCapacity = finite(checkpointDataField(event, "shieldCapacity", type), `${type}.shieldCapacity`, 0, expectedShieldCapacity);
+                const previousShield = finite(checkpointDataField(event, "previousShield", type), `${type}.previousShield`, 0, expectedShieldCapacity);
+                const currentShield = finite(checkpointDataField(event, "currentShield", type), `${type}.currentShield`, 0, expectedShieldCapacity);
+                const componentShieldAbsorbed = finite(checkpointDataField(event, "shieldAbsorbed", type), `${type}.shieldAbsorbed`, 0, expectedShieldCapacity);
+                const nearlyEqual = (left, right) => (Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right)));
+                if (maxHp !== expectedMaxHp || shieldCapacity !== expectedShieldCapacity
+                    || currentHp > previousHp || currentShield > previousShield
+                    || !nearlyEqual(previousHp - currentHp, hpDamage)
+                    || !nearlyEqual(previousShield - currentShield, componentShieldAbsorbed)
+                    || (hpDamage <= 0 && componentShieldAbsorbed <= 0)) {
+                    throw new Error("Game checkpoint boss component event arithmetic is invalid.");
+                }
+                if (type === "bossComponentDestroyed" && !(previousHp > 0 && currentHp === 0)) {
+                    throw new Error("Game checkpoint boss component destruction event crossing is invalid.");
+                }
+            }
+            if (type === "vanguardDamageIntercepted") {
+                const cohortId = stringValue(checkpointDataField(event, "cohortId", type), `${type}.cohortId`);
+                const authored = checkpointFormationProtection[cohortId];
+                if (!authored)
+                    throw new Error("Game checkpoint vanguard interception event references inactive protection.");
+                const protectedEnemyTypeId = stringValue(checkpointDataField(event, "protectedEnemyTypeId", type), `${type}.protectedEnemyTypeId`);
+                const vanguardEnemyTypeId = stringValue(checkpointDataField(event, "vanguardEnemyTypeId", type), `${type}.vanguardEnemyTypeId`);
+                const protectedAssignment = checkpointFormationAssignments?.get(protectedEnemyTypeId);
+                const vanguardAssignment = checkpointFormationAssignments?.get(vanguardEnemyTypeId);
+                if (protectedAssignment?.cohortId !== cohortId
+                    || (protectedAssignment.role !== "body" && protectedAssignment.role !== "support")
+                    || vanguardAssignment?.cohortId !== cohortId
+                    || vanguardAssignment.role !== "vanguard") {
+                    throw new Error("Game checkpoint vanguard interception event has invalid formation roles.");
+                }
+                const sourceKind = stringValue(checkpointDataField(event, "sourceKind", type), `${type}.sourceKind`);
+                if (!authored.sourceKinds.includes(sourceKind)) {
+                    throw new Error("Game checkpoint vanguard interception event source is not authored.");
+                }
+                const originalComponentId = checkpointDataField(event, "originalComponentId", type);
+                if (originalComponentId !== null
+                    && !checkpointEnemyBehaviors?.bosses?.[protectedEnemyTypeId]?.components[String(originalComponentId)]) {
+                    throw new Error("Game checkpoint vanguard interception event references an unknown original component.");
+                }
+                checkpointVanguardInterceptionEventCount += 1;
             }
             if (own(event, "towerTypeId")) {
                 const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -5690,7 +6874,25 @@ export class TowerDefenseGame {
                 if (!nextCell || nextCell.distance >= currentCell.distance) {
                     throw new Error("Game checkpoint enemy navigation nextCoord must strictly lower field distance.");
                 }
-                if (!currentCell.nextCoord
+                const formationAssignment = checkpointFormationAssignments?.get(enemyTypeByInstance.get(entry.enemyId));
+                if (formationAssignment) {
+                    const movementProfile = activeNavigationProfile.movementProfiles[navigation.movementProfileId];
+                    const terrainId = terrainByCoord[coordKey(navigation.nextCoord)];
+                    const hasTerrainOverride = terrainId !== undefined
+                        && Object.prototype.hasOwnProperty.call(movementProfile.terrainCosts ?? {}, terrainId);
+                    const enteredCost = terrainId === undefined
+                        ? null
+                        : hasTerrainOverride
+                            ? movementProfile.terrainCosts[terrainId] ?? null
+                            : movementProfile.terrainMode === "respect_walkable"
+                                && content.terrainTypes[terrainId]?.walkable !== true
+                                ? null
+                                : movementProfile.defaultTerrainCost;
+                    if (enteredCost === null || nextCell.distance + enteredCost !== currentCell.distance) {
+                        throw new Error("Game checkpoint formation navigation nextCoord is not an equal-optimal field link.");
+                    }
+                }
+                else if (!currentCell.nextCoord
                     || navigation.nextCoord.q !== currentCell.nextCoord.q
                     || navigation.nextCoord.r !== currentCell.nextCoord.r) {
                     throw new Error("Game checkpoint enemy navigation nextCoord is not the canonical field link.");
@@ -5759,6 +6961,10 @@ export class TowerDefenseGame {
                     }
                 }
             }
+        }
+        if (checkpointVanguardProtectionTransactionsThisTick !== undefined
+            && checkpointVanguardProtectionTransactionsThisTick !== checkpointVanguardInterceptionEventCount) {
+            throw new Error("Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must equal this tick's vanguardDamageIntercepted event count.");
         }
         for (const transitionEvent of checkpointTransitionEvents) {
             if (transitionEvent.index >= eventCursor) {
@@ -5880,6 +7086,23 @@ export class TowerDefenseGame {
             addedGroups: Object.freeze(decision.addedGroups.map((group) => Object.freeze({ ...group })))
         })));
         this.questEntries = Object.freeze((state.quests?.entries ?? []).map((entry) => Object.freeze({ ...entry })));
+        this.weatherRuntime = this.activeWeatherMechanics && state.weather
+            ? Object.freeze({
+                schemaVersion: 1,
+                active: state.weather.active === null
+                    ? null
+                    : Object.freeze({
+                        ...state.weather.active,
+                        zone: state.weather.active.zone.kind === "all_map"
+                            ? Object.freeze({ kind: "all_map" })
+                            : Object.freeze({
+                                kind: "tiles",
+                                tiles: Object.freeze(state.weather.active.zone.tiles.map((tile) => Object.freeze({ ...tile })))
+                            })
+                    }),
+                periodicOrdinals: Object.freeze({ ...state.weather.periodicOrdinals })
+            })
+            : this.weatherSchedule ? createWeatherRuntimeV1(this.weatherSchedule) : undefined;
         this.lastEvents = [...state.lastEvents];
         this.enemyCounter = state.enemyCounter;
         this.towerCounter = state.towerCounter;
@@ -5914,8 +7137,73 @@ export class TowerDefenseGame {
             ]))
             : {};
         this.enemyExposures = cloneEnemyExposureStates(state.reactions?.exposures.enemies ?? {});
+        this.enemyComponentStates = Object.fromEntries(Object.entries(state.enemyBehaviors?.components ?? {}).map(([enemyId, components]) => [
+            enemyId,
+            Object.fromEntries(Object.entries(components).map(([componentId, component]) => [
+                componentId,
+                {
+                    hp: component.hp,
+                    maxHp: component.maxHp,
+                    ...(component.shield === undefined ? {} : { shield: { ...component.shield } })
+                }
+            ]))
+        ]));
+        this.vanguardProtectionTransactionsThisTick = state.enemyBehaviors?.protectionRuntime?.transactionsThisTick ?? 0;
+        this.projectiles = (state.ballistics?.projectiles ?? []).map((projectile) => {
+            const clearanceCollision = projectile.clearanceCollision;
+            const destructibleCollision = projectile.destructibleCollision;
+            return {
+                ...projectile,
+                sourceCoord: { ...projectile.sourceCoord },
+                ...(clearanceCollision === undefined ? {} : {
+                    clearanceCollision: {
+                        ...clearanceCollision,
+                        blockerCoord: { ...clearanceCollision.blockerCoord }
+                    }
+                }),
+                ...(destructibleCollision === undefined ? {} : {
+                    destructibleCollision: {
+                        ...destructibleCollision,
+                        collisionCoord: { ...destructibleCollision.collisionCoord }
+                    }
+                }),
+                impact: {
+                    targetCoord: { ...projectile.impact.targetCoord },
+                    targetElevation: projectile.impact.targetElevation,
+                    damagePacket: cloneCheckpointJson(projectile.impact.damagePacket)
+                }
+            };
+        });
+        this.nextProjectileSequence = state.ballistics?.nextProjectileSequence ?? 1;
+        if (state.ballistics?.schemaVersion === 4) {
+            this.destructibleObjects = state.ballistics.destructibles.objects.map((object) => ({
+                objectId: object.objectId,
+                definitionId: object.definitionId,
+                coord: { ...object.coord },
+                hp: object.hp,
+                maxHp: object.maxHp,
+                destroyed: object.destroyed
+            }));
+            this.rebuildDestructibleCollisionIndex();
+        }
+        else {
+            this.initializeDestructibleObjects();
+        }
+        this.projectileClearanceInspectionsThisTick = 0;
+        this.projectileDestructibleInspectionsThisTick = 0;
         this.initialRngState = cloneCheckpointJson(initialRng);
         this.rng = SeededRng.fromState(currentRng);
+        if (this.activeWeatherMechanics) {
+            this.weatherSchedule = createWeatherScheduleV1({
+                zones: this.activeWeatherMechanics.zones,
+                definitions: this.activeWeatherMechanics.definitions,
+                schedule: this.activeWeatherMechanics.schedule
+            }, {
+                seed: canonicalStringify(this.initialRngState),
+                missionId: this.mission.id,
+                waveCount: this.mission.waves.length
+            });
+        }
         this.map.restoreAllTerrain();
         for (const tile of this.map.tiles.values())
             delete tile.occupiedBy;
@@ -6014,6 +7302,15 @@ export class TowerDefenseGame {
     buildSnapshot(copyStaticState) {
         const combat = this.buildCombatState();
         const reactions = this.buildReactionState();
+        const enemyBehaviors = this.buildEnemyBehaviorsState();
+        const ballistics = this.buildBallisticsState();
+        const weather = this.activeWeatherMechanics && this.weatherRuntime
+            ? Object.freeze({
+                schemaVersion: 1,
+                profileId: this.activeWeatherMechanics.profileId,
+                active: this.weatherRuntime.active
+            })
+            : undefined;
         const navigation = this.buildNavigationSnapshot();
         const elevation = this.buildElevationSnapshot(copyStaticState);
         const terraforming = this.activeTerraformingMechanics
@@ -6484,6 +7781,9 @@ export class TowerDefenseGame {
             ...(logistics === undefined ? {} : { logistics }),
             ...(director === undefined ? {} : { director }),
             ...(quests === undefined ? {} : { quests }),
+            ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
+            ...(ballistics === undefined ? {} : { ballistics }),
+            ...(weather === undefined ? {} : { weather }),
             scriptState: {
                 values: this.cloneScriptValues(),
                 diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -6624,6 +7924,7 @@ export class TowerDefenseGame {
         }
     }
     runScriptStateMachines(script, eventName, event, parentTraceSequence) {
+        const machineComponent = this.scriptMachineComponentContext(eventName, event);
         for (const machine of script.stateMachines ?? []) {
             const machineContexts = new Set();
             for (const binding of machine.bindings) {
@@ -6640,7 +7941,8 @@ export class TowerDefenseGame {
                         state,
                         stateKey: contextId,
                         event,
-                        eventName
+                        eventName,
+                        ...(machineComponent === undefined ? {} : { machineComponent })
                     };
                     const machineStates = (this.scriptMachines[script.id] ??= {});
                     const contexts = (machineStates[machine.id] ??= {});
@@ -6662,7 +7964,11 @@ export class TowerDefenseGame {
                     }
                     try {
                         const root = this.scriptExpressionContext(context);
-                        const plan = planTowerScriptStateTransition(machine, runtime, eventName, { ...root, machine: { ...runtime } }, this.missionElapsed);
+                        const plan = planTowerScriptStateTransition(machine, runtime, eventName, {
+                            ...root,
+                            ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
+                            machine: { ...runtime }
+                        }, this.missionElapsed);
                         if (!plan)
                             continue;
                         if (this.scriptStateTransitionsRemaining <= 0) {
@@ -6728,6 +8034,7 @@ export class TowerDefenseGame {
         const runtime = this.scriptMachines[context.script.id]?.[machine.id]?.[context.stateKey];
         const root = {
             ...this.scriptExpressionContext(context),
+            ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
             ...(runtime ? { machine: { ...runtime } } : {})
         };
         for (const [actionIndex, action] of actions.entries()) {
@@ -7069,6 +8376,38 @@ export class TowerDefenseGame {
             }
         };
     }
+    scriptMachineComponentContext(eventName, event) {
+        if (eventName !== "bossComponentDamaged" && eventName !== "bossComponentDestroyed")
+            return undefined;
+        const enemyTypeId = event.enemyTypeId;
+        const componentId = event.componentId;
+        if (typeof enemyTypeId !== "string" || typeof componentId !== "string")
+            return undefined;
+        const authored = this.activeEnemyBehaviors?.bosses?.[enemyTypeId]?.components[componentId];
+        if (!authored)
+            return undefined;
+        const hp = Number(event.currentHp);
+        const maxHp = Number(event.maxHp);
+        const currentShield = Number(event.currentShield);
+        const shieldCapacity = Number(event.shieldCapacity);
+        const shield = shieldCapacity > 0
+            ? Object.freeze({ current: currentShield, capacity: shieldCapacity, ratio: currentShield / shieldCapacity })
+            : null;
+        return Object.freeze({
+            schemaVersion: 1,
+            enemyId: String(event.enemyId),
+            enemyTypeId,
+            id: componentId,
+            label: authored.label ?? null,
+            hp,
+            maxHp,
+            hpRatio: hp / maxHp,
+            destroyed: hp === 0,
+            tags: Object.freeze([...(authored.tags ?? [])].sort(compareBinary)),
+            disablesAbilities: Object.freeze([...(authored.disablesAbilities ?? [])].sort(compareBinary)),
+            shield
+        });
+    }
     applyScriptAction(action, context, root, budget) {
         const evaluate = (expression) => evaluateTowerScriptExpression(expression, root, budget);
         const numberValue = (expression, fallback = 0) => {
@@ -7264,6 +8603,7 @@ export class TowerDefenseGame {
                     throw new Error(`Unknown enemy type "${action.enemyTypeId}".`);
                 this.enemies.push(enemy);
             }
+            this.vanguardProtectionIndex = undefined;
             return;
         }
         if (action.action === "setTileTerrain" || action.action === "restoreTileTerrain") {
@@ -8247,6 +9587,7 @@ export class TowerDefenseGame {
                     delete navigation.nextCoord;
                 navigation.edgeProgress = 0;
                 enemy.pathProgress = navigation.stepsEntered;
+                this.vanguardProtectionIndex = undefined;
             };
         }
         else {
@@ -8788,6 +10129,7 @@ export class TowerDefenseGame {
             }
         }
         this.lastEvents.push({ type: "waveStarted", waveIndex });
+        this.startWeatherWave(waveIndex);
         return { ok: true };
     }
     startScheduledWaves() {
@@ -8858,7 +10200,56 @@ export class TowerDefenseGame {
             enemy.pathProgress = enemy.navigation.stepsEntered + enemy.navigation.edgeProgress;
         }
         this.initializeEnemyShield(enemy);
+        this.initializeEnemyComponents(enemy);
         return enemy;
+    }
+    initializeEnemyComponents(enemy) {
+        const authored = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+        if (!authored)
+            return;
+        const multiplier = this.difficulty.enemyHpMultiplier ?? 1;
+        this.enemyComponentStates[enemy.id] = Object.fromEntries(Object.keys(authored).sort(compareBinary).map((componentId) => {
+            const definition = authored[componentId];
+            const maxHp = definition.maxHp * multiplier;
+            return [componentId, {
+                    hp: maxHp,
+                    maxHp,
+                    ...(definition.shield === undefined ? {} : {
+                        shield: {
+                            current: definition.shield.capacity,
+                            capacity: definition.shield.capacity,
+                            regenerationDelayRemaining: 0
+                        }
+                    })
+                }];
+        }));
+    }
+    enemyAbilityEnabled(enemy, abilityId) {
+        const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+        const states = this.enemyComponentStates[enemy.id];
+        if (!definitions || !states)
+            return true;
+        for (const componentId of Object.keys(definitions).sort(compareBinary)) {
+            if ((states[componentId]?.hp ?? 0) <= 0 && definitions[componentId]?.disablesAbilities?.includes(abilityId)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    towerComponentTargetId(enemy, towerTypeId) {
+        const binding = this.activeEnemyBehaviors?.targeting?.towers[towerTypeId];
+        const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+        const states = this.enemyComponentStates[enemy.id];
+        if (!binding || !definitions || !states)
+            return undefined;
+        const componentIds = Object.keys(definitions).sort(compareBinary);
+        for (const tag of binding.priorityTags) {
+            const componentId = componentIds.find((candidateId) => ((states[candidateId]?.hp ?? 0) > 0
+                && definitions[candidateId]?.tags?.includes(tag)));
+            if (componentId !== undefined)
+                return componentId;
+        }
+        return undefined;
     }
     initializeEnemyShield(enemy) {
         const definition = this.combatShieldDefinitions?.enemies[enemy.typeId];
@@ -9006,7 +10397,7 @@ export class TowerDefenseGame {
         }
     }
     updateShieldRegeneration(delta) {
-        if (delta <= 0 || !this.combatShieldDefinitions)
+        if (delta <= 0 || (!this.combatShieldDefinitions && !this.activeEnemyBehaviors))
             return;
         const regenerate = (state, definition, emitFull) => {
             const regeneration = definition.regeneration;
@@ -9028,7 +10419,7 @@ export class TowerDefenseGame {
         };
         for (const enemy of this.enemies) {
             const state = this.enemyShields[enemy.id];
-            const definition = this.combatShieldDefinitions.enemies[enemy.typeId];
+            const definition = this.combatShieldDefinitions?.enemies[enemy.typeId];
             if (!state || !definition)
                 continue;
             regenerate(state, definition, (previous, amount) => {
@@ -9046,7 +10437,7 @@ export class TowerDefenseGame {
         }
         for (const tower of this.towers) {
             const state = this.towerShields[tower.id];
-            const definition = this.combatShieldDefinitions.towers[tower.typeId];
+            const definition = this.combatShieldDefinitions?.towers[tower.typeId];
             if (!state || !definition)
                 continue;
             regenerate(state, definition, (previous, amount) => {
@@ -9061,6 +10452,19 @@ export class TowerDefenseGame {
                     amount
                 });
             });
+        }
+        for (const enemy of this.enemies) {
+            const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+            const states = this.enemyComponentStates[enemy.id];
+            if (!definitions || !states)
+                continue;
+            for (const componentId of Object.keys(definitions).sort(compareBinary)) {
+                const definition = definitions[componentId];
+                const state = states[componentId]?.shield;
+                if (!definition?.shield || !state)
+                    continue;
+                regenerate(state, definition.shield, () => { });
+            }
         }
     }
     advanceNativeTerraformingExpiry(delta) {
@@ -9232,7 +10636,8 @@ export class TowerDefenseGame {
             const terrainSpeedFactor = this.enemyTerrainSpeedFactor(enemy);
             const statusSpeedFactor = this.enemyStatusSpeedFactor(enemy);
             const previousPathOrder = Math.floor(enemy.pathProgress);
-            enemy.pathProgress += type.speed * (this.difficulty.enemySpeedMultiplier ?? 1) * avoidanceSpeedFactor * terrainSpeedFactor * statusSpeedFactor * delta;
+            enemy.pathProgress += type.speed * (this.difficulty.enemySpeedMultiplier ?? 1) * avoidanceSpeedFactor * terrainSpeedFactor
+                * statusSpeedFactor * this.weatherMultiplierAt("enemy_speed", this.enemyCoord(enemy)) * delta;
             const track = this.enemyTrack(enemy);
             const enteredThrough = Math.min(Math.floor(enemy.pathProgress), track.length - 1);
             for (let pathOrder = previousPathOrder + 1; pathOrder <= enteredThrough; pathOrder += 1) {
@@ -9271,9 +10676,14 @@ export class TowerDefenseGame {
     }
     moveDynamicEnemies(delta) {
         this.stabilizeDynamicEnemyNavigation();
+        const formationIndex = this.buildFormationTickIndex();
         const blockingActive = this.heroBlockingActive();
         const blockedEnemyIds = new Set(blockingActive ? this.deriveHeroBlockedEnemyIds() : []);
-        const enemies = blockingActive ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id)) : this.enemies;
+        if (formationIndex !== undefined)
+            this.enemies.sort((left, right) => compareBinary(left.id, right.id));
+        const enemies = blockingActive && formationIndex === undefined
+            ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))
+            : this.enemies;
         for (const enemy of enemies) {
             if (enemy.hp <= 0 || !enemy.navigation || !enemy.routeId)
                 continue;
@@ -9289,6 +10699,7 @@ export class TowerDefenseGame {
             let movementBudget = Math.max(0, type.speed
                 * (this.difficulty.enemySpeedMultiplier ?? 1)
                 * this.enemyStatusSpeedFactor(enemy)
+                * this.weatherMultiplierAt("enemy_speed", this.enemyCoord(enemy))
                 * delta
                 * 1_000);
             let entered = 0;
@@ -9311,8 +10722,14 @@ export class TowerDefenseGame {
                         this.leakDynamicEnemy(enemy, type);
                     break;
                 }
-                navigation.nextCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
-                const enteredCost = lookup.enteredCost(cell);
+                const selectedNextCoord = navigation.edgeProgress > 0 && navigation.nextCoord
+                    ? navigation.nextCoord
+                    : this.selectFormationNextCoord(enemy, field, formationIndex) ?? cell.nextCoord;
+                const selectedNextCell = lookup.get(selectedNextCoord);
+                const enteredCost = selectedNextCell === undefined
+                    ? undefined
+                    : cell.distance - selectedNextCell.distance;
+                navigation.nextCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
                 if (enteredCost === undefined || movementBudget <= 0) {
                     enemy.pathProgress = navigation.stepsEntered + navigation.edgeProgress;
                     break;
@@ -9324,7 +10741,7 @@ export class TowerDefenseGame {
                     break;
                 }
                 movementBudget = Math.max(0, movementBudget - remainingCost);
-                navigation.currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+                navigation.currentCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
                 navigation.edgeProgress = 0;
                 navigation.stepsEntered += 1;
                 enemy.pathProgress = navigation.stepsEntered;
@@ -9353,6 +10770,144 @@ export class TowerDefenseGame {
                     break;
             }
         }
+    }
+    buildFormationTickIndex() {
+        const assignments = this.activeFormationAssignments;
+        const resolver = this.navigationResolver;
+        const lookupCache = this.navigationFieldLookupCache;
+        if (!assignments || !resolver || !lookupCache)
+            return undefined;
+        const observations = new Map();
+        const mutableBuckets = new Map();
+        const partitionKeys = new Set();
+        const enemies = this.enemies
+            .filter((enemy) => enemy.hp > 0 && enemy.navigation && enemy.routeId && assignments.has(enemy.typeId))
+            .sort((left, right) => compareBinary(left.id, right.id));
+        for (const enemy of enemies) {
+            const navigation = enemy.navigation;
+            const assignment = assignments.get(enemy.typeId);
+            const field = this.navigationField(navigation.movementProfileId, enemy.routeId);
+            const lookup = lookupCache.get(field);
+            const anchorCoord = navigation.edgeProgress >= 0.5 && navigation.nextCoord
+                ? navigation.nextCoord
+                : navigation.currentCoord;
+            const remainingCost = lookup.remainingCost(navigation);
+            if (!Number.isFinite(remainingCost))
+                continue;
+            const fieldKey = JSON.stringify([
+                assignment.cohortId,
+                navigation.movementProfileId,
+                field.goal.q,
+                field.goal.r
+            ]);
+            const observation = Object.freeze({
+                enemyId: enemy.id,
+                cohortId: assignment.cohortId,
+                role: assignment.role,
+                steering: assignment.steering,
+                anchorCoord: Object.freeze({ q: anchorCoord.q, r: anchorCoord.r }),
+                fieldKey,
+                remainingCostMilli: Math.round(remainingCost)
+            });
+            observations.set(enemy.id, observation);
+            partitionKeys.add(fieldKey);
+            const bucketKey = `${fieldKey}:${coordKey(anchorCoord)}`;
+            const bucket = mutableBuckets.get(bucketKey) ?? [];
+            bucket.push(enemy.id);
+            mutableBuckets.set(bucketKey, bucket);
+            this.formationSteeringStats.fieldReadCount += 1;
+            this.formationSteeringStats.bucketEntryCount += 1;
+        }
+        this.formationSteeringStats.bucketBuildCount += partitionKeys.size;
+        const buckets = new Map();
+        for (const [key, ids] of mutableBuckets) {
+            buckets.set(key, Object.freeze(ids.sort(compareBinary)));
+        }
+        return { observations, buckets };
+    }
+    collectFormationNeighbors(self, index) {
+        const neighborIds = [];
+        let inspected = 0;
+        const coords = this.map.topology.tilesWithin(self.anchorCoord, self.steering.neighborRadius)
+            .sort((left, right) => (this.map.topology.distance(self.anchorCoord, left) - this.map.topology.distance(self.anchorCoord, right)
+            || left.r - right.r
+            || left.q - right.q));
+        for (const coord of coords) {
+            const ids = index.buckets.get(`${self.fieldKey}:${coordKey(coord)}`) ?? [];
+            for (const enemyId of ids) {
+                if (inspected >= 32 || neighborIds.length >= 16)
+                    break;
+                inspected += 1;
+                if (enemyId !== self.enemyId)
+                    neighborIds.push(enemyId);
+            }
+            if (inspected >= 32 || neighborIds.length >= 16)
+                break;
+        }
+        this.formationSteeringStats.neighborEntriesInspected += inspected;
+        const neighbors = neighborIds
+            .map((enemyId) => index.observations.get(enemyId))
+            .filter((value) => value !== undefined)
+            .sort((left, right) => (this.map.topology.distance(self.anchorCoord, left.anchorCoord)
+            - this.map.topology.distance(self.anchorCoord, right.anchorCoord)
+            || compareBinary(left.enemyId, right.enemyId)))
+            .slice(0, 16)
+            .map((neighbor) => Object.freeze({
+            enemyId: neighbor.enemyId,
+            role: neighbor.role,
+            anchorCoord: neighbor.anchorCoord,
+            remainingCostMilli: neighbor.remainingCostMilli
+        }));
+        this.formationSteeringStats.maximumNeighborCount = Math.max(this.formationSteeringStats.maximumNeighborCount, neighbors.length);
+        return Object.freeze(neighbors);
+    }
+    navigationDestinationCost(movementProfileId, coord) {
+        const profile = this.activeNavigationProfile?.movementProfiles[movementProfileId];
+        const terrain = this.map.getTile(coord)?.terrain;
+        if (!profile || terrain === undefined)
+            return undefined;
+        if (Object.prototype.hasOwnProperty.call(profile.terrainCosts ?? {}, terrain)) {
+            return profile.terrainCosts[terrain] ?? undefined;
+        }
+        if (profile.terrainMode === "respect_walkable" && this.content.terrainTypes[terrain]?.walkable !== true) {
+            return undefined;
+        }
+        return profile.defaultTerrainCost ?? undefined;
+    }
+    selectFormationNextCoord(enemy, field, index) {
+        const navigation = enemy.navigation;
+        const lookup = this.navigationFieldLookupCache?.get(field);
+        const currentCell = navigation && lookup?.get(navigation.currentCoord);
+        if (!navigation || navigation.edgeProgress !== 0 || !index || !lookup || !currentCell?.nextCoord)
+            return undefined;
+        const self = index.observations.get(enemy.id);
+        if (!self)
+            return undefined;
+        const candidates = this.map.topology.neighbors(navigation.currentCoord)
+            .map((coord) => ({ coord, cell: lookup.get(coord) }))
+            .filter((entry) => {
+            if (!entry.cell)
+                return false;
+            const enteredCost = this.navigationDestinationCost(navigation.movementProfileId, entry.coord);
+            return enteredCost !== undefined && entry.cell.distance + enteredCost === currentCell.distance;
+        })
+            .map((entry) => Object.freeze({
+            coord: Object.freeze({ q: entry.coord.q, r: entry.coord.r }),
+            remainingCostMilli: entry.cell.distance
+        }));
+        if (candidates.length === 0)
+            return undefined;
+        this.formationSteeringStats.plannerInvocationCount += 1;
+        return selectFormationSteeringNextV1({
+            schemaVersion: 1,
+            grid: this.map.grid,
+            currentCoord: navigation.currentCoord,
+            canonicalNextCoord: currentCell.nextCoord,
+            candidates,
+            self: { enemyId: enemy.id, cohortId: self.cohortId, role: self.role },
+            neighbors: this.collectFormationNeighbors(self, index),
+            steering: self.steering
+        }).nextCoord;
     }
     heroBlockingActive() {
         const cached = this.activeHeroBlocking;
@@ -9472,7 +11027,7 @@ export class TowerDefenseGame {
                 continue;
             }
             const aura = this.enemyTypes[healer.typeId]?.healAura;
-            if (!aura || aura.radius <= 0 || aura.healPerUnit <= 0) {
+            if (!aura || !this.enemyAbilityEnabled(healer, "healAura") || aura.radius <= 0 || aura.healPerUnit <= 0) {
                 continue;
             }
             const healerCoord = this.enemyCoord(healer);
@@ -9525,7 +11080,9 @@ export class TowerDefenseGame {
                 continue;
             }
             const disrupt = this.enemyTypes[enemy.typeId]?.towerDisrupt;
-            if (!disrupt || disrupt.interval <= 0 || disrupt.duration <= 0) {
+            if (!disrupt || !this.enemyAbilityEnabled(enemy, "towerDisrupt") || disrupt.interval <= 0 || disrupt.duration <= 0) {
+                if (!this.enemyAbilityEnabled(enemy, "towerDisrupt"))
+                    delete enemy.disruptTargetTowerIds;
                 continue;
             }
             enemy.disruptCooldown = (enemy.disruptCooldown ?? disrupt.interval) - delta;
@@ -9584,7 +11141,7 @@ export class TowerDefenseGame {
                 continue;
             }
             const attack = this.enemyTypes[enemy.typeId]?.towerAttack;
-            if (!attack || attack.interval <= 0 || attack.damage <= 0) {
+            if (!attack || !this.enemyAbilityEnabled(enemy, "towerAttack") || attack.interval <= 0 || attack.damage <= 0) {
                 continue;
             }
             enemy.towerAttackCooldown = (enemy.towerAttackCooldown ?? attack.interval) - delta;
@@ -10200,6 +11757,600 @@ export class TowerDefenseGame {
             throw new Error("Artifact management failure is missing a reason key.");
         return Object.freeze({ allowed: false, reasonKey: result.reasonKey });
     }
+    ballisticsBinding(towerTypeId) {
+        return this.activeBallisticsMechanics?.projectiles.towers[towerTypeId];
+    }
+    prepareTowerProjectile(tower, target, damage, binding) {
+        if (this.projectiles.length >= BALLISTICS_LIMITS.activeProjectiles)
+            return undefined;
+        const sourceCoord = { q: tower.coord.q, r: tower.coord.r };
+        const targetCoord = { ...this.enemyCoord(target) };
+        const sourceElevation = this.map.elevationAt(sourceCoord) ?? 0;
+        const targetElevation = this.map.elevationAt(targetCoord) ?? 0;
+        const clearance = this.activeBallisticsMechanics?.projectiles.clearance;
+        const trace = clearance === undefined
+            ? undefined
+            : traceProjectileClearanceV1(this.map, this.content.terrainTypes, clearance, {
+                sourceCoord,
+                targetCoord,
+                sourceElevation,
+                targetElevation,
+                trajectory: binding.trajectory,
+                travelTimeUnits: binding.travelTimeUnits,
+                ...(binding.maxAltitude === undefined ? {} : { maxAltitude: binding.maxAltitude })
+            }, Math.max(0, ARC_CLEARANCE_LIMITS.cellInspectionsPerTick - this.projectileClearanceInspectionsThisTick));
+        if (trace !== undefined) {
+            this.projectileClearanceInspectionsThisTick += trace.cellInspections;
+            if (!trace.ok)
+                return undefined;
+        }
+        const destructibleTrace = this.destructibleCollisionIndex === undefined
+            ? undefined
+            : traceProjectileDestructibleCollisionV1(this.map, this.destructibleCollisionIndex, {
+                sourceCoord,
+                targetCoord,
+                sourceElevation,
+                targetElevation,
+                trajectory: binding.trajectory,
+                travelTimeUnits: binding.travelTimeUnits,
+                ...(binding.maxAltitude === undefined ? {} : { maxAltitude: binding.maxAltitude }),
+                ...(trace?.ok && trace.collision !== undefined ? { terrainCollision: trace.collision } : {})
+            }, Math.max(0, DESTRUCTIBLE_COLLISION_LIMITS.cellInspectionsPerTick
+                - this.projectileDestructibleInspectionsThisTick));
+        if (destructibleTrace !== undefined) {
+            this.projectileDestructibleInspectionsThisTick += destructibleTrace.cellInspections;
+            if (!destructibleTrace.ok)
+                return undefined;
+        }
+        const fixedCollision = destructibleTrace?.ok ? destructibleTrace.collision : undefined;
+        const destructibleCollision = fixedCollision?.kind === "map_object" ? fixedCollision : undefined;
+        const clearanceCollision = fixedCollision?.kind === "terrain"
+            ? fixedCollision
+            : destructibleTrace === undefined && trace?.ok ? trace.collision : undefined;
+        const damagePacket = this.buildTowerDamagePacket(tower.typeId, target, damage, {}, tower.id);
+        return {
+            id: `projectile_${this.nextProjectileSequence}`,
+            sourceCoord,
+            trajectory: binding.trajectory,
+            elapsedUnits: 0,
+            travelTimeUnits: binding.travelTimeUnits,
+            altitude: sourceElevation,
+            ...(binding.maxAltitude === undefined ? {} : { maxAltitude: binding.maxAltitude }),
+            sourceElevation,
+            ...(clearanceCollision !== undefined ? {
+                clearanceCollision: {
+                    blockerCoord: { ...clearanceCollision.blockerCoord },
+                    terrainId: clearanceCollision.terrainId,
+                    blockerTag: clearanceCollision.blockerTag,
+                    blockerElevation: clearanceCollision.blockerElevation,
+                    elapsedUnits: clearanceCollision.elapsedUnits
+                }
+            } : {}),
+            ...(destructibleCollision === undefined ? {} : {
+                destructibleCollision: {
+                    ...destructibleCollision,
+                    collisionCoord: { ...destructibleCollision.collisionCoord }
+                }
+            }),
+            ...(binding.ricochet === undefined ? {} : {
+                ricochet: {
+                    schemaVersion: 1,
+                    maxBounces: binding.ricochet.maxBounces,
+                    rangeCells: binding.ricochet.rangeCells,
+                    bounceCount: 0,
+                    segmentHasTarget: true
+                }
+            }),
+            impact: {
+                targetCoord,
+                targetElevation,
+                damagePacket: cloneCheckpointJson(damagePacket)
+            }
+        };
+    }
+    commitTowerProjectile(projectile) {
+        this.nextProjectileSequence += 1;
+        this.projectiles.push(projectile);
+    }
+    compareRicochetEnemyIds(left, right) {
+        const leftMatch = /^enemy_([1-9][0-9]*)$/.exec(left.id);
+        const rightMatch = /^enemy_([1-9][0-9]*)$/.exec(right.id);
+        if (leftMatch && rightMatch) {
+            const numeric = Number(leftMatch[1]) - Number(rightMatch[1]);
+            if (numeric !== 0)
+                return numeric;
+        }
+        return compareBinary(left.id, right.id);
+    }
+    buildRicochetEnemyBuckets() {
+        const collected = new Map();
+        for (const enemy of this.enemies) {
+            if (enemy.hp <= 0)
+                continue;
+            const key = coordKey(this.enemyCoord(enemy));
+            const bucket = collected.get(key);
+            if (bucket === undefined)
+                collected.set(key, [enemy]);
+            else
+                bucket.push(enemy);
+        }
+        const bounded = new Map();
+        for (const [key, bucket] of collected) {
+            bounded.set(key, bucket
+                .sort((left, right) => this.compareRicochetEnemyIds(left, right))
+                .slice(0, RICOCHET_LIMITS.enemyCandidatesPerCell));
+        }
+        return bounded;
+    }
+    ricochetIncomingCoord(projectile, collisionCoord) {
+        const line = this.map.line(projectile.sourceCoord, projectile.impact.targetCoord);
+        const index = line.findIndex((coord) => sameGridCoord(coord, collisionCoord));
+        if (index <= 0)
+            return undefined;
+        return { ...line[index - 1] };
+    }
+    reflectProjectile(projectile, kind, surfaceId, collisionCoord, incomingFromCoord, enemyBuckets) {
+        const ricochet = projectile.ricochet;
+        const surfaces = this.activeBallisticsMechanics?.projectiles.ricochet;
+        if (!ricochet || !surfaces || ricochet.bounceCount >= ricochet.maxBounces
+            || this.projectileRicochetsThisTick >= RICOCHET_LIMITS.ricochetsPerTick)
+            return undefined;
+        const reflective = kind === "terrain"
+            ? surfaces.terrainTags?.[surfaceId] === true
+            : surfaces.armorTypes?.[surfaceId] === true;
+        if (!reflective)
+            return undefined;
+        const ray = traceProjectileRicochetRayV1(this.map, {
+            kind,
+            incomingFromCoord: { ...incomingFromCoord },
+            collisionCoord: { ...collisionCoord },
+            rangeCells: ricochet.rangeCells
+        }, Math.max(0, RICOCHET_LIMITS.cellInspectionsPerTick - this.projectileRicochetInspectionsThisTick));
+        this.projectileRicochetInspectionsThisTick += ray.cellInspections;
+        if (!ray.ok || ray.ray.length === 0)
+            return undefined;
+        let nextTarget;
+        let nextTargetCoord;
+        for (const coord of ray.ray) {
+            const candidate = enemyBuckets.get(coordKey(coord))?.find((enemy) => enemy.hp > 0);
+            if (candidate === undefined)
+                continue;
+            nextTarget = candidate;
+            nextTargetCoord = { ...coord };
+            break;
+        }
+        const segmentHasTarget = nextTarget !== undefined;
+        nextTargetCoord ??= { ...ray.ray[ray.ray.length - 1] };
+        const nextSourceCoord = { ...ray.nextSourceCoord };
+        const sourceElevation = this.map.elevationAt(nextSourceCoord) ?? 0;
+        const targetElevation = this.map.elevationAt(nextTargetCoord) ?? 0;
+        const clearance = this.activeBallisticsMechanics?.projectiles.clearance;
+        const clearanceTrace = clearance === undefined
+            ? undefined
+            : traceProjectileClearanceV1(this.map, this.content.terrainTypes, clearance, {
+                sourceCoord: nextSourceCoord,
+                targetCoord: nextTargetCoord,
+                sourceElevation,
+                targetElevation,
+                trajectory: projectile.trajectory,
+                travelTimeUnits: projectile.travelTimeUnits,
+                ...(projectile.maxAltitude === undefined ? {} : { maxAltitude: projectile.maxAltitude })
+            }, Math.max(0, ARC_CLEARANCE_LIMITS.cellInspectionsPerTick - this.projectileClearanceInspectionsThisTick));
+        if (clearanceTrace !== undefined) {
+            this.projectileClearanceInspectionsThisTick += clearanceTrace.cellInspections;
+            if (!clearanceTrace.ok)
+                return undefined;
+        }
+        const destructibleTrace = this.destructibleCollisionIndex === undefined
+            ? undefined
+            : traceProjectileDestructibleCollisionV1(this.map, this.destructibleCollisionIndex, {
+                sourceCoord: nextSourceCoord,
+                targetCoord: nextTargetCoord,
+                sourceElevation,
+                targetElevation,
+                trajectory: projectile.trajectory,
+                travelTimeUnits: projectile.travelTimeUnits,
+                ...(projectile.maxAltitude === undefined ? {} : { maxAltitude: projectile.maxAltitude }),
+                ...(clearanceTrace?.ok && clearanceTrace.collision !== undefined
+                    ? { terrainCollision: clearanceTrace.collision }
+                    : {})
+            }, Math.max(0, DESTRUCTIBLE_COLLISION_LIMITS.cellInspectionsPerTick
+                - this.projectileDestructibleInspectionsThisTick));
+        if (destructibleTrace !== undefined) {
+            this.projectileDestructibleInspectionsThisTick += destructibleTrace.cellInspections;
+            if (!destructibleTrace.ok)
+                return undefined;
+        }
+        const fixedCollision = destructibleTrace?.ok ? destructibleTrace.collision : undefined;
+        const destructibleCollision = fixedCollision?.kind === "map_object" ? fixedCollision : undefined;
+        const clearanceCollision = fixedCollision?.kind === "terrain"
+            ? fixedCollision
+            : destructibleTrace === undefined && clearanceTrace?.ok ? clearanceTrace.collision : undefined;
+        const packet = projectile.impact.damagePacket;
+        const nextPacket = nextTarget === undefined
+            ? packet
+            : {
+                ...packet,
+                target: {
+                    kind: "enemy",
+                    enemyId: nextTarget.id,
+                    enemyTypeId: nextTarget.typeId
+                }
+            };
+        const bounceCount = ricochet.bounceCount + 1;
+        const { clearanceCollision: _previousClearanceCollision, destructibleCollision: _previousDestructibleCollision, ...projectileWithoutTerminalCollision } = projectile;
+        const reflected = {
+            ...projectileWithoutTerminalCollision,
+            sourceCoord: nextSourceCoord,
+            sourceElevation,
+            elapsedUnits: 0,
+            altitude: sourceElevation,
+            ...(clearanceCollision !== undefined ? {
+                clearanceCollision: {
+                    blockerCoord: { ...clearanceCollision.blockerCoord },
+                    terrainId: clearanceCollision.terrainId,
+                    blockerTag: clearanceCollision.blockerTag,
+                    blockerElevation: clearanceCollision.blockerElevation,
+                    elapsedUnits: clearanceCollision.elapsedUnits
+                }
+            } : {}),
+            ...(destructibleCollision === undefined ? {} : {
+                destructibleCollision: {
+                    ...destructibleCollision,
+                    collisionCoord: { ...destructibleCollision.collisionCoord }
+                }
+            }),
+            ricochet: {
+                ...ricochet,
+                bounceCount,
+                segmentHasTarget,
+                lastCollision: {
+                    kind,
+                    surfaceId,
+                    collisionCoord: { ...collisionCoord },
+                    incomingFromCoord: { ...incomingFromCoord }
+                }
+            },
+            impact: {
+                targetCoord: nextTargetCoord,
+                targetElevation,
+                damagePacket: cloneCheckpointJson(nextPacket)
+            }
+        };
+        this.projectileRicochetsThisTick += 1;
+        this.lastEvents.push({
+            type: "projectileRicocheted",
+            projectileId: projectile.id,
+            bounceCount,
+            surfaceKind: kind,
+            surfaceId,
+            collisionCoord: { ...collisionCoord },
+            nextSourceCoord: { ...nextSourceCoord },
+            nextTargetCoord: { ...nextTargetCoord }
+        });
+        return reflected;
+    }
+    persistentOverridesForCandidateTerrain(candidateTerrainByCoord) {
+        const overrides = new Map();
+        for (const tile of this.map.tiles.values()) {
+            const key = coordKey(tile);
+            const terrain = candidateTerrainByCoord.get(key);
+            const baseTerrain = this.map.getBaseTerrain(tile);
+            if (terrain === undefined || baseTerrain === undefined || terrain === baseTerrain)
+                continue;
+            const previous = this.runtimeTerrainOverrides.get(key);
+            overrides.set(key, {
+                q: tile.q,
+                r: tile.r,
+                terrain,
+                source: previous?.source ?? "script"
+            });
+        }
+        return overrides;
+    }
+    prepareDestructibleTerrainTransition(object, transitionId) {
+        return preparePersistentTerrainTransaction({
+            map: this.map,
+            terrainTypes: this.content.terrainTypes,
+            transitions: this.activeTerraformingMechanics?.terrainTransitions ?? Object.freeze({}),
+            runtimeOverrides: this.runtimeTerrainOverrides,
+            operations: [{
+                    kind: "set_terrain",
+                    coord: { ...object.coord },
+                    transitionId,
+                    order: 0
+                }],
+            navigation: this.activeNavigationProfile === undefined
+                ? { mode: "authored_routes" }
+                : {
+                    mode: "dynamic_flow",
+                    prove: (candidateTerrainByCoord) => {
+                        try {
+                            const plan = this.planDynamicPersistentTerrainNavigation({
+                                overrides: this.persistentOverridesForCandidateTerrain(candidateTerrainByCoord),
+                                writes: [],
+                                events: []
+                            });
+                            return {
+                                baselineAvailable: plan.baselineAvailable,
+                                candidateAvailable: plan.candidateAvailable,
+                                proof: plan
+                            };
+                        }
+                        catch (error) {
+                            if (error instanceof TowerScriptTerraformingError
+                                && error.reasonKey === "terraform.last_path_blocked") {
+                                return { baselineAvailable: true, candidateAvailable: false };
+                            }
+                            if (error instanceof TowerScriptTerraformingError
+                                && error.reasonKey === "terraform.navigation_unavailable") {
+                                return { baselineAvailable: false, candidateAvailable: false };
+                            }
+                            throw error;
+                        }
+                    }
+                }
+        });
+    }
+    applyDestructibleProjectileImpact(projectile, collision) {
+        const object = this.destructibleObjects.find((candidate) => (candidate.objectId === collision.objectId
+            && candidate.definitionId === collision.definitionId));
+        if (!object || object.destroyed)
+            return;
+        const definition = this.activeBallisticsMechanics?.projectiles.destructibles
+            ?.definitions[object.definitionId];
+        if (!definition)
+            throw new Error("Active destructible collision lost its authored definition.");
+        const armor = definition.armorTypeId === undefined
+            ? undefined
+            : this.activeCombatMechanics?.armorTypes[definition.armorTypeId];
+        if (definition.armorTypeId !== undefined && armor === undefined) {
+            throw new Error("Active destructible collision lost its authored armor provenance.");
+        }
+        const plan = planDestructibleObjectDamageV1(projectile.impact.damagePacket, {
+            objectId: object.objectId,
+            definitionId: object.definitionId,
+            hp: object.hp,
+            maxHp: object.maxHp,
+            ...(definition.armorTypeId === undefined ? {} : { armorTypeId: definition.armorTypeId })
+        }, armor === undefined ? {} : {
+            armorMatrix: {
+                armorTypeId: definition.armorTypeId,
+                ...(armor.defaultMultiplier === undefined ? {} : { defaultMultiplier: armor.defaultMultiplier }),
+                multipliers: armor.multipliers
+            }
+        });
+        if (plan.outcome === "no_effect")
+            return;
+        let terrainAdoption;
+        if (plan.outcome === "requires_atomic_destruction" && definition.onDestroyed !== undefined) {
+            if (this.isNativeTerraformTargetOwned("terrain", object.coord))
+                return;
+            let prepared;
+            try {
+                prepared = this.prepareDestructibleTerrainTransition(object, definition.onDestroyed.terrainTransitionId);
+            }
+            catch (error) {
+                if (error instanceof PersistentTerrainTransactionError
+                    || error instanceof TowerScriptTerraformingError)
+                    return;
+                throw error;
+            }
+            const adopted = adoptPersistentTerrainTransaction(prepared, (adoption) => {
+                for (const write of adoption.writes)
+                    this.map.setTerrain(write.coord, write.terrain);
+                this.runtimeTerrainOverrides = new Map(adoption.runtimeOverrides.map((override) => [
+                    coordKey(override),
+                    { ...override }
+                ]));
+                terrainAdoption = adoption;
+            });
+            if (!adopted.adopted || terrainAdoption === undefined) {
+                throw new Error("Prepared destructible terrain transaction could not be adopted.");
+            }
+            const navigation = terrainAdoption.navigationProof;
+            if (navigation) {
+                this.navigationResolver = navigation.candidateResolver;
+                this.navigationFieldLookupCache = navigation.candidateLookupCache;
+                this.navigationEnemyFields = navigation.candidateEnemyFields;
+                const rebinds = new Map(navigation.enemyRebinds.map((rebind) => [rebind.enemyId, rebind]));
+                for (const enemy of this.enemies) {
+                    const rebind = rebinds.get(enemy.id);
+                    if (!rebind)
+                        continue;
+                    enemy.navigation = rebind.navigation;
+                    enemy.pathProgress = rebind.pathProgress;
+                }
+            }
+            this.revalidateHeroMovementAfterMapMutation();
+            this.syncTemporaryWaterTiles();
+        }
+        const previousHp = object.hp;
+        object.hp = plan.nextHp;
+        object.destroyed = plan.outcome === "requires_atomic_destruction";
+        this.lastEvents.push({
+            type: "destructibleObjectDamaged",
+            projectileId: projectile.id,
+            objectId: object.objectId,
+            definitionId: object.definitionId,
+            coord: { ...object.coord },
+            fromHp: previousHp,
+            toHp: object.hp,
+            damage: plan.resolution.finalAmount
+        });
+        if (terrainAdoption !== undefined) {
+            this.lastEvents.push(...terrainAdoption.events.map((entry) => entry.event));
+        }
+        if (object.destroyed) {
+            this.lastEvents.push({
+                type: "destructibleObjectDestroyed",
+                projectileId: projectile.id,
+                objectId: object.objectId,
+                definitionId: object.definitionId,
+                coord: { ...object.coord }
+            });
+            this.rebuildDestructibleCollisionIndex();
+        }
+    }
+    updateProjectiles(delta) {
+        if (!this.activeBallisticsMechanics || this.projectiles.length === 0 || delta <= 0)
+            return;
+        const retained = [];
+        let ricochetEnemyBuckets;
+        let impacts = 0;
+        for (const current of this.projectiles.slice().sort((left, right) => compareBinary(left.id, right.id))) {
+            const collision = "clearanceCollision" in current ? current.clearanceCollision : undefined;
+            const destructibleCollision = "destructibleCollision" in current
+                ? current.destructibleCollision
+                : undefined;
+            const terminalElapsed = destructibleCollision === undefined
+                ? collision?.elapsedUnits ?? current.travelTimeUnits
+                : destructibleCollision.elapsedUnits;
+            const elapsedUnits = Math.min(terminalElapsed, current.elapsedUnits + delta);
+            const altitude = this.projectileAltitude({ ...current, elapsedUnits });
+            const advanced = {
+                ...current,
+                elapsedUnits,
+                altitude,
+                sourceCoord: { ...current.sourceCoord },
+                ...(collision === undefined ? {} : {
+                    clearanceCollision: { ...collision, blockerCoord: { ...collision.blockerCoord } }
+                }),
+                ...(destructibleCollision === undefined ? {} : {
+                    destructibleCollision: {
+                        ...destructibleCollision,
+                        collisionCoord: { ...destructibleCollision.collisionCoord }
+                    }
+                }),
+                impact: {
+                    targetCoord: { ...current.impact.targetCoord },
+                    targetElevation: current.impact.targetElevation,
+                    damagePacket: current.impact.damagePacket
+                }
+            };
+            if (elapsedUnits < terminalElapsed || impacts >= BALLISTICS_LIMITS.impactsPerTick) {
+                retained.push(advanced);
+                continue;
+            }
+            impacts += 1;
+            if (destructibleCollision !== undefined) {
+                this.applyDestructibleProjectileImpact(advanced, destructibleCollision);
+                continue;
+            }
+            if (collision !== undefined) {
+                const blockerHeight = this.activeBallisticsMechanics.projectiles.clearance
+                    ?.terrainBlockerHeights[collision.blockerTag];
+                if (blockerHeight === undefined) {
+                    throw new Error("Active ballistics clearance collision lost its authored blocker provenance.");
+                }
+                const incomingFromCoord = this.ricochetIncomingCoord(advanced, collision.blockerCoord);
+                const reflected = incomingFromCoord === undefined
+                    ? undefined
+                    : this.reflectProjectile(advanced, "terrain", collision.blockerTag, collision.blockerCoord, incomingFromCoord, ricochetEnemyBuckets ??= this.buildRicochetEnemyBuckets());
+                if (reflected !== undefined) {
+                    retained.push(reflected);
+                    continue;
+                }
+                this.lastEvents.push({
+                    type: "projectileBlocked",
+                    projectileId: advanced.id,
+                    targetCoord: { ...advanced.impact.targetCoord },
+                    blockerCoord: { ...collision.blockerCoord },
+                    terrainId: collision.terrainId,
+                    blockerTag: collision.blockerTag,
+                    projectileAltitude: this.projectileAltitude(advanced),
+                    obstacleTop: collision.blockerElevation + blockerHeight
+                });
+                continue;
+            }
+            const packet = advanced.impact.damagePacket;
+            const ricochetState = advanced.ricochet;
+            const targetRef = packet.target.kind === "enemy" ? packet.target : undefined;
+            if (ricochetState?.segmentHasTarget === false) {
+                this.lastEvents.push({
+                    type: "projectileMissed",
+                    projectileId: advanced.id,
+                    targetEnemyId: targetRef?.enemyId ?? "",
+                    targetCoord: { ...advanced.impact.targetCoord },
+                    reason: "target_missing"
+                });
+                continue;
+            }
+            const target = targetRef === undefined
+                ? undefined
+                : this.enemies.find((enemy) => enemy.id === targetRef.enemyId && enemy.typeId === targetRef.enemyTypeId && enemy.hp > 0);
+            if (!target) {
+                this.lastEvents.push({
+                    type: "projectileMissed",
+                    projectileId: advanced.id,
+                    targetEnemyId: targetRef?.enemyId ?? "",
+                    targetCoord: { ...advanced.impact.targetCoord },
+                    reason: "target_missing"
+                });
+                continue;
+            }
+            const targetCoord = this.enemyCoord(target);
+            if (targetCoord.q !== advanced.impact.targetCoord.q || targetCoord.r !== advanced.impact.targetCoord.r) {
+                this.lastEvents.push({
+                    type: "projectileMissed",
+                    projectileId: advanced.id,
+                    targetEnemyId: target.id,
+                    targetCoord: { ...advanced.impact.targetCoord },
+                    reason: "target_moved"
+                });
+                continue;
+            }
+            if (targetRef?.componentId !== undefined
+                && (this.enemyComponentStates[target.id]?.[targetRef.componentId]?.hp ?? 0) <= 0) {
+                this.lastEvents.push({
+                    type: "projectileMissed",
+                    projectileId: advanced.id,
+                    targetEnemyId: target.id,
+                    targetCoord: { ...advanced.impact.targetCoord },
+                    reason: "component_unavailable"
+                });
+                continue;
+            }
+            const componentArmorTypeId = targetRef?.componentId === undefined
+                ? undefined
+                : this.activeEnemyBehaviors?.bosses?.[target.typeId]?.components[targetRef.componentId]?.armorTypeId;
+            const armorTypeId = componentArmorTypeId
+                ?? resolveEnemyArmorMatrix(this.activeCombatMechanics, target.typeId)?.armorTypeId;
+            if (armorTypeId !== undefined) {
+                const incomingFromCoord = this.ricochetIncomingCoord(advanced, targetCoord);
+                const reflected = incomingFromCoord === undefined
+                    ? undefined
+                    : this.reflectProjectile(advanced, "armor", armorTypeId, targetCoord, incomingFromCoord, ricochetEnemyBuckets ??= this.buildRicochetEnemyBuckets());
+                if (reflected !== undefined) {
+                    retained.push(reflected);
+                    continue;
+                }
+            }
+            const application = this.resolveAndApplyDamage(packet, this.enemyDamageResolutionContext(target, packet), { kind: "enemy", enemy: target });
+            const appliedEnemy = application.enemyTarget ?? target;
+            if (application.resolution.finalAmount > 0) {
+                if (packet.source.kind === "tower")
+                    this.applyStatusOnHit(packet.source.towerTypeId, appliedEnemy);
+                this.lastEvents.push({
+                    type: "enemyHit",
+                    towerId: packet.source.kind === "tower" ? packet.source.towerId ?? "" : "",
+                    enemyId: appliedEnemy.id,
+                    enemyTypeId: appliedEnemy.typeId,
+                    damage: application.resolution.finalAmount
+                });
+            }
+            else if (packet.amount > 0 && application.resolution.blockedByArmor && packet.source.kind === "tower") {
+                this.lastEvents.push({
+                    type: "enemyArmorBlocked",
+                    towerId: packet.source.towerId ?? "",
+                    enemyId: appliedEnemy.id,
+                    enemyTypeId: appliedEnemy.typeId,
+                    rawDamage: packet.amount
+                });
+            }
+        }
+        this.projectiles = retained;
+    }
     updateTowers(delta) {
         const poweredConsumers = this.activeLogisticsPower
             ? (this.ensureLogisticsPowerSnapshot(), this.logisticsPoweredConsumerIds)
@@ -10251,11 +12402,19 @@ export class TowerDefenseGame {
                 tower.cooldown = 0;
                 return;
             }
+            const damage = tower.stacks * damagePerStack;
+            const projectileBinding = chain === undefined ? this.ballisticsBinding(tower.typeId) : undefined;
+            const preparedProjectile = projectileBinding === undefined
+                ? undefined
+                : this.prepareTowerProjectile(tower, target, damage, projectileBinding);
+            if (projectileBinding !== undefined && preparedProjectile === undefined)
+                return;
             if (this.activeLogisticsAmmunition && !this.consumeTowerAmmunition(tower))
                 return;
-            const damage = tower.stacks * damagePerStack;
             this.lastEvents.push({ type: "towerFired", towerId: tower.id, enemyId: target.id, damage });
-            const applied = this.applyTowerDamage(tower, target, damage);
+            const applied = projectileBinding
+                ? (this.commitTowerProjectile(preparedProjectile), 0)
+                : this.applyTowerDamage(tower, target, damage);
             if (chain && applied > 0) {
                 this.propagateChain(tower, target, damage, chain);
             }
@@ -10307,7 +12466,7 @@ export class TowerDefenseGame {
             if (this.activeLogisticsAmmunition && !this.towerHasRequiredAmmunition(tower))
                 return;
             let targets = this.enemies.filter((enemy) => enemy.hp > 0 && this.enemyTargetClass(enemy) === "ground" && this.enemyInTowerAcquisitionRange(tower, enemy));
-            if (this.activeLineOfSightProfile) {
+            if (this.activeLineOfSightProfile || this.dynamicLineOfSightIndex) {
                 targets = targets
                     .sort((left, right) => this.compareTargets(tower, left, right))
                     .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
@@ -10582,7 +12741,7 @@ export class TowerDefenseGame {
     }
     legacyOrderTowerTargetCandidates(tower, candidates) {
         const sorted = [...candidates].sort((left, right) => this.compareTargets(tower, left, right));
-        if (!this.activeLineOfSightProfile)
+        if (!this.activeLineOfSightProfile && !this.dynamicLineOfSightIndex)
             return sorted;
         return sorted
             .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
@@ -10595,7 +12754,8 @@ export class TowerDefenseGame {
         const stable = [...candidates].sort((left, right) => compareBinary(left.id, right.id));
         const visible = [];
         for (const enemy of stable) {
-            if (this.activeLineOfSightProfile && !this.towerHasLineOfSight(tower, enemy))
+            if ((this.activeLineOfSightProfile || this.dynamicLineOfSightIndex)
+                && !this.towerHasLineOfSight(tower, enemy))
                 continue;
             visible.push(enemy);
             // The engine owns the acquisition bound and keeps the first binary-stable candidates.
@@ -10695,9 +12855,19 @@ export class TowerDefenseGame {
     }
     towerHasLineOfSight(tower, enemy) {
         const profile = this.activeLineOfSightProfile;
-        if (!profile)
-            return true;
-        return traceLineOfSight(this.map, this.content.terrainTypes, profile.terrainBlockerTags, tower.coord, this.enemyCoord(enemy)).row.visible;
+        const dynamicIndex = this.dynamicLineOfSightIndex;
+        if (!dynamicIndex) {
+            if (!profile)
+                return true;
+            return traceLineOfSight(this.map, this.content.terrainTypes, profile.terrainBlockerTags, tower.coord, this.enemyCoord(enemy)).row.visible;
+        }
+        return traceLineOfSightV2(this.map, profile === undefined ? undefined : this.lineOfSightLegacyPolicy(profile), dynamicIndex, tower.coord, this.enemyCoord(enemy)).row.visible;
+    }
+    lineOfSightLegacyPolicy(profile) {
+        return {
+            terrainTypes: this.content.terrainTypes,
+            terrainBlockerTags: profile.terrainBlockerTags
+        };
     }
     compareTargets(tower, left, right) {
         if (this.activeNavigationProfile)
@@ -10772,7 +12942,8 @@ export class TowerDefenseGame {
         const distance = this.map.distance(tower.coord, this.enemyCoord(enemy));
         const type = this.towerTypes[tower.typeId];
         const minRange = type?.attack.kind === "pipeline" ? (type.attack.minRange ?? 0) : 0;
-        return distance >= minRange && distance <= this.towerRange(tower) + rangeBonus;
+        return distance >= minRange
+            && distance <= this.towerRange(tower) * this.weatherMultiplierAt("visibility_range", tower.coord) + rangeBonus;
     }
     enemyInsideTowerCone(tower, primary, candidate, angleDegrees) {
         if (candidate.id === primary.id || angleDegrees >= 360)
@@ -10884,8 +13055,145 @@ export class TowerDefenseGame {
         const order = Math.min(Math.round(enemy.pathProgress), track.length - 1);
         return this.sunlightPathKeys.has(this.routePathKey(enemy.routeId, order));
     }
-    applyResolvedEnemyDamage(enemy, amount, source, options = {}) {
+    buildVanguardProtectionIndex() {
+        if (this.vanguardProtectionIndex)
+            return this.vanguardProtectionIndex;
+        const assignments = this.activeFormationAssignments;
+        if (!assignments)
+            return undefined;
+        const mutable = new Map();
+        for (const enemy of [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))) {
+            const assignment = assignments.get(enemy.typeId);
+            if (enemy.hp <= 0 || assignment?.role !== "vanguard" || !assignment.protection)
+                continue;
+            const key = `${assignment.cohortId}:${coordKey(this.enemyCoord(enemy))}`;
+            const bucket = mutable.get(key) ?? [];
+            bucket.push(enemy);
+            mutable.set(key, bucket);
+        }
+        const buckets = new Map();
+        for (const [key, enemies] of mutable)
+            buckets.set(key, Object.freeze(enemies));
+        this.vanguardProtectionIndex = { buckets };
+        return this.vanguardProtectionIndex;
+    }
+    collectVanguardProtectionCandidates(cohortId, targetCoord, radius, index) {
+        const candidates = [];
+        const coords = this.map.topology.tilesWithin(targetCoord, radius);
+        for (let distance = 0; distance <= radius && candidates.length < ENEMY_BEHAVIORS_LIMITS.protectionCandidatesPerPacket; distance += 1) {
+            const buckets = coords
+                .filter((coord) => this.map.topology.distance(targetCoord, coord) === distance)
+                .map((coord) => index.buckets.get(`${cohortId}:${coordKey(coord)}`) ?? [])
+                .filter((bucket) => bucket.length > 0);
+            const cursors = buckets.map(() => 0);
+            while (candidates.length < ENEMY_BEHAVIORS_LIMITS.protectionCandidatesPerPacket) {
+                let selectedBucket = -1;
+                let selected;
+                for (let bucketIndex = 0; bucketIndex < buckets.length; bucketIndex += 1) {
+                    const candidate = buckets[bucketIndex][cursors[bucketIndex]];
+                    if (candidate && (!selected || compareBinary(candidate.id, selected.id) < 0)) {
+                        selected = candidate;
+                        selectedBucket = bucketIndex;
+                    }
+                }
+                if (!selected || selectedBucket < 0)
+                    break;
+                cursors[selectedBucket] = cursors[selectedBucket] + 1;
+                candidates.push(selected);
+            }
+        }
+        this.vanguardProtectionMaximumCandidateCount = Math.max(this.vanguardProtectionMaximumCandidateCount, candidates.length);
+        return Object.freeze(candidates);
+    }
+    planVanguardDamageInterception(packet, target) {
+        const assignment = this.activeFormationAssignments?.get(target.typeId);
+        const protection = assignment?.protection;
+        if (target.hp <= 0
+            || !protection
+            || (assignment.role !== "body" && assignment.role !== "support")
+            || packet.target.kind !== "enemy"
+            || packet.amount <= 0
+            || packet.source.kind === "leak"
+            || packet.source.kind === "weather"
+            || !protection.sourceKinds.includes(packet.source.kind)
+            || this.vanguardProtectionTransactionsThisTick >= ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick)
+            return undefined;
+        const index = this.buildVanguardProtectionIndex();
+        if (!index)
+            return undefined;
+        const candidates = this.collectVanguardProtectionCandidates(assignment.cohortId, this.enemyCoord(target), protection.radius, index);
+        let vanguard;
+        for (const candidate of candidates) {
+            this.vanguardProtectionCandidatesInspected += 1;
+            const shield = this.enemyShields[candidate.id];
+            if (candidate.hp > 0 && shield && shield.current > 0) {
+                vanguard = candidate;
+                break;
+            }
+        }
+        if (!vanguard)
+            return undefined;
+        this.vanguardProtectionTransactionsThisTick += 1;
+        this.lastEvents.push({
+            type: "vanguardDamageIntercepted",
+            cohortId: assignment.cohortId,
+            protectedEnemyId: target.id,
+            protectedEnemyTypeId: target.typeId,
+            vanguardEnemyId: vanguard.id,
+            vanguardEnemyTypeId: vanguard.typeId,
+            sourceKind: packet.source.kind,
+            requestedAmount: packet.amount,
+            originalComponentId: packet.target.componentId ?? null
+        });
+        return {
+            packet: {
+                ...packet,
+                target: { kind: "enemy", enemyId: vanguard.id, enemyTypeId: vanguard.typeId }
+            },
+            enemy: vanguard
+        };
+    }
+    enemyDamageResolutionContext(enemy, packet) {
         const armorMatrix = resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
+        const resistances = this.activeCombatMechanics?.enemyResistances[enemy.typeId]
+            ?? this.enemyTypes[enemy.typeId]?.resistances;
+        const marks = this.activeMarkDamageContext(enemy);
+        const legacyDefinition = this.enemyTypes[enemy.typeId]?.armor;
+        const towerTypeId = packet.source.kind === "tower" ? packet.source.towerTypeId : undefined;
+        const legacyArmor = legacyDefinition?.kind === "pierce_only"
+            ? {
+                kind: "pierce_only",
+                bypassed: packet.tags?.includes("armor_piercing") === true
+                    || (towerTypeId !== undefined && this.piercesSniperArmor(towerTypeId)),
+                chipDamage: towerTypeId === undefined
+                    ? 0
+                    : this.armoredChipDamageForTower(towerTypeId, legacyDefinition.chipDamageByTowerId)
+            }
+            : undefined;
+        const context = {
+            ...(armorMatrix === undefined ? {} : { armorMatrix }),
+            ...(resistances === undefined ? {} : { resistances }),
+            ...(legacyArmor === undefined ? {} : { legacyArmor }),
+            ...(marks === undefined ? {} : { marks })
+        };
+        return Object.keys(context).length === 0 ? undefined : context;
+    }
+    applyResolvedEnemyDamage(enemy, amount, source, options = {}) {
+        const componentDefinition = options.componentId === undefined
+            ? undefined
+            : this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components[options.componentId];
+        const componentArmor = componentDefinition?.armorTypeId === undefined
+            ? undefined
+            : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
+        const armorMatrix = componentDefinition
+            ? componentArmor === undefined
+                ? undefined
+                : {
+                    armorTypeId: componentDefinition.armorTypeId,
+                    ...(componentArmor.defaultMultiplier === undefined ? {} : { defaultMultiplier: componentArmor.defaultMultiplier }),
+                    multipliers: componentArmor.multipliers
+                }
+            : resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
         const resistances = this.activeCombatMechanics?.enemyResistances[enemy.typeId];
         const marks = this.activeMarkDamageContext(enemy);
         const context = {
@@ -10897,7 +13205,12 @@ export class TowerDefenseGame {
         return this.resolveAndApplyDamage({
             amount,
             source,
-            target: { kind: "enemy", enemyId: enemy.id, enemyTypeId: enemy.typeId },
+            target: {
+                kind: "enemy",
+                enemyId: enemy.id,
+                enemyTypeId: enemy.typeId,
+                ...(options.componentId === undefined ? {} : { componentId: options.componentId })
+            },
             ...(options.damageType === undefined ? {} : { damageType: options.damageType }),
             ...(options.tags?.length ? { tags: options.tags } : {}),
             ...(options.modifiers?.length ? { modifiers: options.modifiers } : {})
@@ -10925,12 +13238,37 @@ export class TowerDefenseGame {
         }, undefined, { kind: "hero", hero });
     }
     resolveAndApplyDamage(packet, context, mutableTarget, reactionRuntime) {
+        if (mutableTarget.kind === "enemy") {
+            const initialComponentId = packet.target.kind === "enemy" ? packet.target.componentId : undefined;
+            const initialComponentState = initialComponentId === undefined
+                ? undefined
+                : this.enemyComponentStates[mutableTarget.enemy.id]?.[initialComponentId];
+            if (packet.target.kind !== "enemy"
+                || packet.target.enemyId !== mutableTarget.enemy.id
+                || packet.target.enemyTypeId !== mutableTarget.enemy.typeId
+                || (initialComponentId !== undefined && initialComponentState === undefined)) {
+                throw new Error("Damage packet target does not match mutable target or authored component.");
+            }
+        }
+        if (mutableTarget.kind === "enemy") {
+            const interception = this.planVanguardDamageInterception(packet, mutableTarget.enemy);
+            if (interception) {
+                packet = interception.packet;
+                mutableTarget = { kind: "enemy", enemy: interception.enemy };
+                context = this.enemyDamageResolutionContext(interception.enemy, packet);
+            }
+        }
+        const componentId = packet.target.kind === "enemy" ? packet.target.componentId : undefined;
+        const componentState = componentId === undefined || mutableTarget.kind !== "enemy"
+            ? undefined
+            : this.enemyComponentStates[mutableTarget.enemy.id]?.[componentId];
         const targetMatches = mutableTarget.kind === "core"
             ? packet.target.kind === "core"
             : mutableTarget.kind === "enemy"
                 ? packet.target.kind === "enemy"
                     && packet.target.enemyId === mutableTarget.enemy.id
                     && packet.target.enemyTypeId === mutableTarget.enemy.typeId
+                    && (packet.target.componentId === undefined || componentState !== undefined)
                 : mutableTarget.kind === "tower"
                     ? packet.target.kind === "tower"
                         && packet.target.towerId === mutableTarget.tower.id
@@ -10941,7 +13279,28 @@ export class TowerDefenseGame {
         if (!targetMatches) {
             throw new Error("Damage packet target does not match mutable target.");
         }
-        const resolvedDamage = DamageResolver.resolve(packet, context);
+        const componentDefinition = componentId === undefined || mutableTarget.kind !== "enemy"
+            ? undefined
+            : this.activeEnemyBehaviors?.bosses?.[mutableTarget.enemy.typeId]?.components[componentId];
+        const previousComponentHp = componentState?.hp;
+        const previousComponentShield = componentState?.shield?.current ?? 0;
+        const componentShieldCapacity = componentState?.shield?.capacity ?? 0;
+        const componentArmor = componentDefinition?.armorTypeId === undefined
+            ? undefined
+            : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
+        const componentContext = componentDefinition === undefined
+            ? context
+            : {
+                ...(context ?? {}),
+                armorMatrix: componentArmor === undefined
+                    ? undefined
+                    : {
+                        armorTypeId: componentDefinition.armorTypeId,
+                        ...(componentArmor.defaultMultiplier === undefined ? {} : { defaultMultiplier: componentArmor.defaultMultiplier }),
+                        multipliers: componentArmor.multipliers
+                    }
+            };
+        const resolvedDamage = DamageResolver.resolve(packet, componentContext);
         const capturedReactionState = mutableTarget.kind === "enemy" && this.activeReactionsMechanics
             ? {
                 coord: this.enemyCoord(mutableTarget.enemy),
@@ -10988,10 +13347,9 @@ export class TowerDefenseGame {
         }
         else if (resolvedDamage.finalAmount > 0
             && (mutableTarget.kind === "enemy" || mutableTarget.kind === "tower")) {
-            const isEnemy = mutableTarget.kind === "enemy";
-            const entity = isEnemy ? mutableTarget.enemy : mutableTarget.tower;
-            const state = isEnemy ? this.enemyShields[entity.id] : this.towerShields[entity.id];
-            const definition = isEnemy
+            const entity = mutableTarget.kind === "enemy" ? mutableTarget.enemy : mutableTarget.tower;
+            const state = mutableTarget.kind === "enemy" ? this.enemyShields[entity.id] : this.towerShields[entity.id];
+            const definition = mutableTarget.kind === "enemy"
                 ? this.combatShieldDefinitions?.enemies[entity.typeId]
                 : this.combatShieldDefinitions?.towers[entity.typeId];
             if (state && definition) {
@@ -11001,7 +13359,7 @@ export class TowerDefenseGame {
                 hpDamage = resolvedDamage.finalAmount - shieldAbsorbed;
                 state.current = previous - shieldAbsorbed;
                 if (shieldAbsorbed > 0) {
-                    if (isEnemy) {
+                    if (mutableTarget.kind === "enemy") {
                         this.lastEvents.push({
                             type: "enemyShieldChanged",
                             enemyId: entity.id,
@@ -11033,12 +13391,25 @@ export class TowerDefenseGame {
                 }
             }
         }
+        if (resolvedDamage.finalAmount > 0 && componentState && componentDefinition?.shield) {
+            const shield = componentState.shield;
+            if (!shield)
+                throw new Error("Boss component shield state is missing.");
+            shield.regenerationDelayRemaining = componentDefinition.shield.regeneration?.delayAfterDamage ?? 0;
+            const absorbed = Math.min(shield.current, hpDamage);
+            shield.current -= absorbed;
+            shieldAbsorbed += absorbed;
+            hpDamage -= absorbed;
+        }
         // Keep the target-specific legacy mutation formulas stable while applying only overflow to HP.
         const resolution = hpDamage === resolvedDamage.finalAmount
             ? resolvedDamage
             : { ...resolvedDamage, finalAmount: hpDamage };
         const previousEnemyHp = mutableTarget.kind === "enemy" ? mutableTarget.enemy.hp : undefined;
-        if (mutableTarget.kind === "enemy") {
+        if (mutableTarget.kind === "enemy" && componentState) {
+            componentState.hp = Math.max(0, componentState.hp - resolution.finalAmount);
+        }
+        else if (mutableTarget.kind === "enemy") {
             // Zero is the canonical pending-death state. Settlement intentionally stays
             // deferred to removeDeadEnemies(), preserving reward/event ordering exactly once.
             mutableTarget.enemy.hp = Math.max(0, mutableTarget.enemy.hp - resolution.finalAmount);
@@ -11055,6 +13426,34 @@ export class TowerDefenseGame {
         else {
             mutableTarget.hero.hp = Math.max(0, (mutableTarget.hero.hp ?? 0) - resolution.finalAmount);
         }
+        if (mutableTarget.kind === "enemy"
+            && componentId !== undefined
+            && componentState
+            && previousComponentHp !== undefined) {
+            const currentComponentShield = componentState.shield?.current ?? 0;
+            const componentHpDamage = previousComponentHp - componentState.hp;
+            const componentShieldAbsorbed = previousComponentShield - currentComponentShield;
+            if (componentHpDamage > 0 || componentShieldAbsorbed > 0) {
+                const payload = {
+                    enemyId: mutableTarget.enemy.id,
+                    enemyTypeId: mutableTarget.enemy.typeId,
+                    componentId,
+                    sourceKind: packet.source.kind,
+                    previousHp: previousComponentHp,
+                    currentHp: componentState.hp,
+                    maxHp: componentState.maxHp,
+                    hpDamage: componentHpDamage,
+                    previousShield: previousComponentShield,
+                    currentShield: currentComponentShield,
+                    shieldCapacity: componentShieldCapacity,
+                    shieldAbsorbed: componentShieldAbsorbed
+                };
+                this.lastEvents.push({ type: "bossComponentDamaged", ...payload });
+                if (previousComponentHp > 0 && componentState.hp === 0) {
+                    this.lastEvents.push({ type: "bossComponentDestroyed", ...payload });
+                }
+            }
+        }
         if (mutableTarget.kind === "enemy") {
             this.consumeResolvedMarks(mutableTarget.enemy, resolvedDamage);
             this.applySourceMarkBindings(mutableTarget.enemy, packet, resolvedDamage);
@@ -11062,7 +13461,12 @@ export class TowerDefenseGame {
                 this.planAndApplyReactions(packet, mutableTarget.enemy, resolvedDamage, capturedReactionState, reactionRuntime);
             }
         }
-        return { resolution: resolvedDamage, shieldAbsorbed, hpDamage };
+        return {
+            resolution: resolvedDamage,
+            shieldAbsorbed,
+            hpDamage,
+            ...(mutableTarget.kind === "enemy" ? { enemyTarget: mutableTarget.enemy } : {})
+        };
     }
     planAndApplyReactions(packet, enemy, resolvedDamage, captured, runtime) {
         const profile = this.activeReactionsMechanics;
@@ -11233,15 +13637,16 @@ export class TowerDefenseGame {
     }
     applyTowerDamage(tower, enemy, rawDamage, options = {}) {
         const application = this.applyResolvedTowerDamage(tower.typeId, enemy, rawDamage, options, tower.id);
+        const appliedEnemy = application.enemyTarget ?? enemy;
         const damage = application.resolution.finalAmount;
         if (damage > 0) {
             if (options.applyLegacyStatus !== false)
-                this.applyStatusOnHit(tower.typeId, enemy);
+                this.applyStatusOnHit(tower.typeId, appliedEnemy);
             this.lastEvents.push({
                 type: "enemyHit",
                 towerId: tower.id,
-                enemyId: enemy.id,
-                enemyTypeId: enemy.typeId,
+                enemyId: appliedEnemy.id,
+                enemyTypeId: appliedEnemy.typeId,
                 damage
             });
             return damage;
@@ -11250,14 +13655,14 @@ export class TowerDefenseGame {
             this.lastEvents.push({
                 type: "enemyArmorBlocked",
                 towerId: tower.id,
-                enemyId: enemy.id,
-                enemyTypeId: enemy.typeId,
+                enemyId: appliedEnemy.id,
+                enemyTypeId: appliedEnemy.typeId,
                 rawDamage
             });
         }
         return 0;
     }
-    applyResolvedTowerDamage(towerTypeId, enemy, rawDamage, options = {}, towerId) {
+    buildTowerDamagePacket(towerTypeId, enemy, rawDamage, options = {}, towerId) {
         const modifiers = [];
         if (this.towerDamageMultiplier !== 1) {
             modifiers.push({
@@ -11308,27 +13713,34 @@ export class TowerDefenseGame {
             tags.push("area");
         if (options.armorPiercing)
             tags.push("armor_piercing");
-        const armor = this.enemyTypes[enemy.typeId]?.armor;
-        const legacyArmor = armor?.kind === "pierce_only"
-            ? {
-                kind: "pierce_only",
-                bypassed: options.armorPiercing === true || this.piercesSniperArmor(towerTypeId),
-                chipDamage: this.armoredChipDamageForTower(towerTypeId, armor.chipDamageByTowerId)
-            }
-            : undefined;
         const source = {
             kind: "tower",
             towerTypeId,
             ...(towerId === undefined ? {} : { towerId })
         };
-        return this.applyResolvedEnemyDamage(enemy, rawDamage, source, {
+        const componentId = this.towerComponentTargetId(enemy, towerTypeId);
+        return Object.freeze({
+            amount: rawDamage,
             damageType: options.damageType ?? this.damageTypeOf(towerTypeId),
+            source: Object.freeze(source),
+            target: Object.freeze({
+                kind: "enemy",
+                enemyId: enemy.id,
+                enemyTypeId: enemy.typeId,
+                ...(componentId === undefined ? {} : { componentId })
+            }),
             ...(tags.length ? { tags } : {}),
-            ...(modifiers.length ? { modifiers } : {}),
-            context: {
-                resistances: this.enemyTypes[enemy.typeId]?.resistances,
-                ...(legacyArmor === undefined ? {} : { legacyArmor })
-            }
+            ...(modifiers.length ? { modifiers } : {})
+        });
+    }
+    applyResolvedTowerDamage(towerTypeId, enemy, rawDamage, options = {}, towerId) {
+        const packet = this.buildTowerDamagePacket(towerTypeId, enemy, rawDamage, options, towerId);
+        return this.applyResolvedEnemyDamage(enemy, packet.amount, packet.source, {
+            damageType: packet.damageType,
+            componentId: packet.target.kind === "enemy" ? packet.target.componentId : undefined,
+            ...(packet.tags === undefined ? {} : { tags: packet.tags }),
+            ...(packet.modifiers === undefined ? {} : { modifiers: packet.modifiers }),
+            context: this.enemyDamageResolutionContext(enemy, packet)
         });
     }
     draftDamageModifiersForTower(tower) {
@@ -11463,6 +13875,7 @@ export class TowerDefenseGame {
         }
         if (spawned.length > 0) {
             this.enemies.push(...spawned);
+            this.vanguardProtectionIndex = undefined;
         }
     }
     createPhaseSpawnChildren(parent, phase) {
@@ -11509,7 +13922,7 @@ export class TowerDefenseGame {
             const multiplier = attack.fireRateMultiplierByLevel[Math.min(levelIndex, attack.fireRateMultiplierByLevel.length - 1)] ?? 1;
             best = Math.max(best, multiplier * this.towerFireRateMetaMultiplier);
         }
-        return best;
+        return best * this.weatherMultiplierAt("tower_fire_rate", tower.coord);
     }
     supportBuffTouchesTower(support, target) {
         const supportType = this.towerTypes[support.typeId];
@@ -12039,6 +14452,7 @@ export class TowerDefenseGame {
             delete this.enemyShields[enemy.id];
             delete this.enemyMarks[enemy.id];
             delete this.enemyExposures[enemy.id];
+            delete this.enemyComponentStates[enemy.id];
             this.navigationEnemyFields?.delete(enemy.id);
             const killedBeforeEndpoint = enemy.navigation
                 ? !this.dynamicEnemyAtGoal(enemy)
@@ -12064,6 +14478,7 @@ export class TowerDefenseGame {
             }
         }
         this.enemies = [...survivors, ...spawned];
+        this.vanguardProtectionIndex = undefined;
     }
     settleArtifactLoot(enemy) {
         const active = this.activeRogueliteMechanics;
@@ -12169,8 +14584,10 @@ export class TowerDefenseGame {
             return;
         }
         const battlefieldClear = this.spawnQueue.length === 0 && this.enemies.length === 0;
-        if (battlefieldClear)
+        if (battlefieldClear) {
             this.awardClearedWaveIncome();
+            this.endWeatherWave();
+        }
         const allWavesClear = this.startedWaveCount >= this.mission.waves.length && battlefieldClear;
         this.waveState = allWavesClear ? "complete" : battlefieldClear ? "between" : "spawning";
         this.syncPrepRemaining();
