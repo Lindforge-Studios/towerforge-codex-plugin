@@ -43,6 +43,7 @@ export * from "./physics-presentation.mjs";
 export * from "./terraforming-presentation.mjs";
 export * from "./roguelite-presentation.mjs";
 export * from "./arsenal-presentation.mjs";
+export * from "./macro-economy-presentation.mjs";
 export * from "./campaign-presentation.mjs";
 export * from "./heroes-presentation.mjs";
 export * from "./director-presentation.mjs";
@@ -55,6 +56,7 @@ export * from "./vanguard-protection-presentation.mjs";
 export * from "./ballistics-presentation.mjs";
 export * from "./destructible-environment-presentation.mjs";
 export * from "./weather-presentation.mjs";
+export * from "./ghost-replay-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
