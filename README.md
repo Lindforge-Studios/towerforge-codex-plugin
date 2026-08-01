@@ -7,7 +7,7 @@
 Use Codex to inspect, author, validate, simulate, balance, script, and package local TowerForge
 games through project-aware tools.
 
-Current plugin version: `0.4.0`
+Current plugin version: `0.5.2`
 
 ## Install
 
@@ -52,6 +52,6 @@ This is a generated release mirror. Do not edit runtime files here. Every releas
 source commit and per-file SHA-256 values in `build-manifest.json`.
 
 - Canonical source: [Lindforge-Studios/TowerForge](https://github.com/Lindforge-Studios/TowerForge)
-- Source commit: [`318671c25f79f79f6092ff9abe77e443f1093bba`](https://github.com/Lindforge-Studios/TowerForge/commit/318671c25f79f79f6092ff9abe77e443f1093bba)
+- Source commit: [`c77e1cac61c5823d19e580746d9363debf992708`](https://github.com/Lindforge-Studios/TowerForge/commit/c77e1cac61c5823d19e580746d9363debf992708)
 - Distribution workflow: `Sync from TowerForge` in this mirror. It uses only this repository's
   short-lived `GITHUB_TOKEN`; no cross-repository credential is stored.
