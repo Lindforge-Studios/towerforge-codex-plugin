@@ -6,8 +6,8 @@
   "mcpProtocolVersion": "2024-11-05",
   "agentGuideVersion": 50,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "db1dd07e0b0a1d75d7f06db0987a76570edd0de2",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/db1dd07e0b0a1d75d7f06db0987a76570edd0de2",
+  "sourceCommit": "351672ff44ab99b06fd59ea193a77a5278d16d18",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/351672ff44ab99b06fd59ea193a77a5278d16d18",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -2201,7 +2201,7 @@
     {
       "path": "README.md",
       "size": 2240,
-      "sha256": "a09fbf83da142c92eedbdec7a3976b55bca3d6548fcb0676940bb31628df92ea"
+      "sha256": "bea51b23abe24b0a3071456020e0e9c3a90a0ef3c82f6b75190f5f08f21e1d4b"
     },
     {
       "path": "scripts/verify-release.mjs",
