@@ -4,10 +4,10 @@
   "towerforgeVersion": "0.6.1",
   "mcpServerVersion": "0.6.1",
   "mcpProtocolVersion": "2024-11-05",
-  "agentGuideVersion": 52,
+  "agentGuideVersion": 53,
   "sourceRepository": "https://github.com/Lindforge-Studios/TowerForge",
-  "sourceCommit": "131fb7e526174509f0ecbd2214b20f5b9b499ad5",
-  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/131fb7e526174509f0ecbd2214b20f5b9b499ad5",
+  "sourceCommit": "85a5e9c9dcecbed6bc0f5dd6dd02be6bde9b86a2",
+  "sourceTree": "https://github.com/Lindforge-Studios/TowerForge/tree/85a5e9c9dcecbed6bc0f5dd6dd02be6bde9b86a2",
   "runtimeRequirements": {
     "node": ">=22",
     "installsDependenciesAtRuntime": false
@@ -810,8 +810,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/build.mjs",
-      "size": 262817,
-      "sha256": "9c26f8d0632999ebc74b77594e1704cac76c3e2686d5958d58e9d64a045f86ac"
+      "size": 283137,
+      "sha256": "c84e6e11ca6c79bae775642aa37012a99c3ccbb57dbe1c2adad8b63924b3abcd"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/create.mjs",
@@ -825,8 +825,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/assets.mjs",
-      "size": 6276,
-      "sha256": "b81d35854aafc65e42c33c4654a7beb847876d8541b9ab9558bb4b1caa969cb4"
+      "size": 9407,
+      "sha256": "f60b0aaf0a77eaf1bd8b775c3f5092230c4f5a7c8a7d3aa578f57764e2957ef1"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/auto-balancer-worker-thread.mjs",
@@ -837,6 +837,11 @@
       "path": "plugins/towerforge/runtime/packages/cli/lib/auto-balancer-worker.mjs",
       "size": 20471,
       "sha256": "5e57b90dce6befb7e219891f50b3203aa89aaf94d0454a19bb080e149092668a"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/cli/lib/camera-authoring.mjs",
+      "size": 29749,
+      "sha256": "ad7f525b96161d0e954fcdb6a8ad9447daf224ce4075fa1e4c48578ee39c475f"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/campaign-authoring.mjs",
@@ -880,8 +885,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/generated-assets.mjs",
-      "size": 9542,
-      "sha256": "597690976cd8634f140b5bff11e9aadcb37b36f487afd9477d43997d04780c33"
+      "size": 9813,
+      "sha256": "504035ffe0410625de9abaae10a142a22015307699a1547978b3cab25a686eb5"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/generated-desktop-release.mjs",
@@ -945,8 +950,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/procedural-juice-authoring.mjs",
-      "size": 26646,
-      "sha256": "90a5274d4d17214e5563d23c61db96f977cd8844589ac1d0764ab02cb1070022"
+      "size": 26810,
+      "sha256": "2b270f29fdf0287e8541269d75d237de42d1dac42fb1d0f029931044236b8024"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-loader.mjs",
@@ -965,8 +970,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-schema.mjs",
-      "size": 72364,
-      "sha256": "ccc6547bb48e0f46ed73d9fb9eb36aeaa7e57a8798248a771acf9e9a421c9214"
+      "size": 83670,
+      "sha256": "75770b92f618961d42ffd6ecf5223eba8f09d49f56f4c9edc4e201dca6bce98a"
     },
     {
       "path": "plugins/towerforge/runtime/packages/cli/lib/project-scripts.mjs",
@@ -2030,8 +2035,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/agent-instructions.mjs",
-      "size": 38967,
-      "sha256": "aeacc13fbc0008a1f3783da16be62b6ee141a18d0f8cf735f9e62399a550417c"
+      "size": 39802,
+      "sha256": "dab8d6690f0402e895f44c97d5dd6ee8553de077300fcde64b16a0769d0fdb6c"
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/protocol.mjs",
@@ -2045,8 +2050,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/tools.mjs",
-      "size": 296395,
-      "sha256": "8551f9915d0960fa080e7edd4f40603bb899e6ba5fe7396f7392470a5770852e"
+      "size": 306136,
+      "sha256": "22c906000cccc90c4f8eab4fed4f4cc1fbb17bf23cce2fefe64d733bbfd4af40"
     },
     {
       "path": "plugins/towerforge/runtime/packages/mcp/workspace-session.mjs",
@@ -2134,6 +2139,21 @@
       "sha256": "a1e1916f85e76efb872196e92f3a451f3f9a7de8de3ed151b05fd7a165c609a8"
     },
     {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/camera-projector.mjs",
+      "size": 12846,
+      "sha256": "03975fd3df06f831c794a0be6f31b020c36c2aab88504b118b4555f070476e59"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/camera-renderer-integration.mjs",
+      "size": 7398,
+      "sha256": "02063f239fff0f10863ff80fb5099467207ef9e1fd0951debc5394991ea05b46"
+    },
+    {
+      "path": "plugins/towerforge/runtime/packages/renderer/src/camera-view-assets.mjs",
+      "size": 11989,
+      "sha256": "f9843913af565efb4ab227a23b4a595566b00e3ed6a0b9f83e8905da3f72b864"
+    },
+    {
       "path": "plugins/towerforge/runtime/packages/renderer/src/campaign-presentation.mjs",
       "size": 13205,
       "sha256": "4dea01a17f604108bddd42ea9c52a4115b7c3c2f15b5c1f18f63b359a46e5951"
@@ -2180,8 +2200,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/index.mjs",
-      "size": 64737,
-      "sha256": "d39b0581f72fa73c713c909150c5214ccc923bad7170add32d60042a3f22ab3c"
+      "size": 75366,
+      "sha256": "86c40124c4f900e93fd98435bf68fd931b165644dc5990d3d924dfcd19638203"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/line-of-sight-presentation.mjs",
@@ -2210,8 +2230,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/procedural-juice-presentation.mjs",
-      "size": 23298,
-      "sha256": "548761272e5764e4e08a4ca3416e9df227c3f57526fe5399888c8a01883fe9f7"
+      "size": 23325,
+      "sha256": "ae64d7ac0e1188b54e7d841ee18404603e16e36e775addbcf6d63e814f698386"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/procedural-juice-runtime.mjs",
@@ -2240,8 +2260,8 @@
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/viewport-transform.mjs",
-      "size": 5367,
-      "sha256": "1ad0a01598b4e0d81bc8ee9f48b2e661aa618a73d9091fa07ce2ddf3b243127e"
+      "size": 5752,
+      "sha256": "9f8069bf8cbae2e67e19ff3f8e0d001cfcbb43756c2b15167ae7c00d6381971a"
     },
     {
       "path": "plugins/towerforge/runtime/packages/renderer/src/weather-presentation.mjs",
@@ -2261,7 +2281,7 @@
     {
       "path": "README.md",
       "size": 2240,
-      "sha256": "781477b8d2a2be489b2fb9b1c614a10bcae6c0255e160f953a35215dd3af5033"
+      "sha256": "4ffab6793b5360a3c9741281e145d2513412f919483087aa13b73eb73ed94bcd"
     },
     {
       "path": "scripts/verify-release.mjs",
